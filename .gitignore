@@ -22,6 +22,18 @@ lib64/
 include/
 pyvenv.cfg
 
+# Virtualenv (incluye lib64 y demás directorios)
+bin/
+lib/
+lib64/
+include/
+pyvenv.cfg
+venv/
+.venv/
+ENV/
+env/
+
+
 # ---- Herramientas y editores ----
 .vscode/
 .idea/
