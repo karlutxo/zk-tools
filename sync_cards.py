@@ -10,22 +10,42 @@ DEFAULT_PORT = 4370
 
 
 def sync_cards(src_conn, dst_conn):
-    """Sync card numbers from src_conn users to dst_conn."""
-    users = src_conn.get_users()
+    """Sync card numbers from src_conn users to dst_conn matching by user_id.
+
+    Only the ``card`` field is updated in the destination terminal; all the
+    remaining user information is preserved as stored on ``dst_conn``.
+    """
+
+    src_users = src_conn.get_users()
+    dst_users = dst_conn.get_users()
+
+    # Map destination users by their user_id for quick lookup
+    dst_by_user_id = {getattr(u, 'user_id', ''): u for u in dst_users}
+
     updated = 0
-    for u in users:
-        if not _has_valid_card(u):
+    for src_u in src_users:
+        if not _has_valid_card(src_u):
             continue
+
+        user_id = getattr(src_u, 'user_id', '')
+        if not user_id:
+            continue
+
+        dst_u = dst_by_user_id.get(user_id)
+        if not dst_u:
+            continue
+
         dst_conn.set_user(
-            uid=u.uid,
-            name=getattr(u, 'name', ''),
-            privilege=getattr(u, 'privilege', const.USER_DEFAULT),
-            password=getattr(u, 'password', ''),
-            group_id=getattr(u, 'group_id', ''),
-            user_id=getattr(u, 'user_id', ''),
-            card=getattr(u, 'card', '')
+            uid=dst_u.uid,
+            name=getattr(dst_u, 'name', ''),
+            privilege=getattr(dst_u, 'privilege', const.USER_DEFAULT),
+            password=getattr(dst_u, 'password', ''),
+            group_id=getattr(dst_u, 'group_id', ''),
+            user_id=getattr(dst_u, 'user_id', ''),
+            card=getattr(src_u, 'card', '')
         )
         updated += 1
+
     return updated
 
 
