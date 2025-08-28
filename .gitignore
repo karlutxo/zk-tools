@@ -1,0 +1,40 @@
+# ---- Python ----
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.so
+*.egg-info/
+.eggs/
+build/
+dist/
+pip-wheel-metadata/
+*.log
+
+# ---- Virtualenvs (incluye el actual) ----
+.venv/
+venv/
+ENV/
+env/
+bin/
+lib/
+lib64/
+include/
+pyvenv.cfg
+
+# ---- Herramientas y editores ----
+.vscode/
+.idea/
+*.code-workspace
+
+# ---- Sistemas/otros ----
+.DS_Store
+Thumbs.db
+
+# ---- Tests/Cobertura ----
+.coverage
+.coverage.*
+htmlcov/
+.tox/
+.pytest_cache/
+.mypy_cache/
