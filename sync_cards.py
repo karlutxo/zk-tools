@@ -5,6 +5,7 @@ import sys
 
 from zk import const
 from zk_tools import connect_with_retries, _has_valid_card
+from update_empl import update_employee_card
 
 DEFAULT_PORT = 4370
 
@@ -17,10 +18,6 @@ def sync_cards(src_conn, dst_conn):
     """
 
     src_users = src_conn.get_users()
-    dst_users = dst_conn.get_users()
-
-    # Map destination users by their user_id for quick lookup
-    dst_by_user_id = {getattr(u, 'user_id', ''): u for u in dst_users}
 
     updated = 0
     for src_u in src_users:
@@ -31,20 +28,8 @@ def sync_cards(src_conn, dst_conn):
         if not user_id:
             continue
 
-        dst_u = dst_by_user_id.get(user_id)
-        if not dst_u:
-            continue
-
-        dst_conn.set_user(
-            uid=dst_u.uid,
-            name=getattr(dst_u, 'name', ''),
-            privilege=getattr(dst_u, 'privilege', const.USER_DEFAULT),
-            password=getattr(dst_u, 'password', ''),
-            group_id=getattr(dst_u, 'group_id', ''),
-            user_id=getattr(dst_u, 'user_id', ''),
-            card=getattr(src_u, 'card', '')
-        )
-        updated += 1
+        if (update_employee_card(dst_conn, user_id=user_id, card=getattr(src_u, 'card', ''))):
+            updated += 1
 
     return updated
 

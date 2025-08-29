@@ -7,8 +7,8 @@ from zk import const
 from zk_tools import connect_with_retries
 
 DEFAULT_PORT = 4370
-TARGET_USER_ID = '1800410'
-NEW_CARD = '4088337'
+TARGET_USER_ID = '1800409'
+NEW_CARD = '1977255'
 
 
 def update_employee_card(conn, user_id=TARGET_USER_ID, card=NEW_CARD):
@@ -16,16 +16,21 @@ def update_employee_card(conn, user_id=TARGET_USER_ID, card=NEW_CARD):
     users = conn.get_users()
     for u in users:
         if str(getattr(u, 'user_id', '')) == str(user_id):
-            conn.set_user(
-                uid=u.uid,
-                name=getattr(u, 'name', ''),
-                privilege=getattr(u, 'privilege', const.USER_DEFAULT),
-                password=getattr(u, 'password', ''),
-                group_id=getattr(u, 'group_id', ''),
-                user_id=getattr(u, 'user_id', ''),
-                card=card,
-            )
-            return True
+            if str(getattr(u, 'card', '')) != str(card):
+                conn.set_user(
+                    uid=u.uid,
+                    name=getattr(u, 'name', ''),
+                    privilege=getattr(u, 'privilege', const.USER_DEFAULT),
+                    password=getattr(u, 'password', ''),
+                    group_id=getattr(u, 'group_id', ''),
+                    user_id=getattr(u, 'user_id', ''),
+                    card=card,
+                )
+                print(f'Usuario: {user_id}, tarjeta actualizada')
+                return True
+            else:
+                print(f'Usuario: {user_id}, tarjeta ya es igual. No se actualiza')
+                return False
     return False
 
 
