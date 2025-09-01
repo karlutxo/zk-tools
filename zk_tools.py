@@ -79,13 +79,20 @@ def list_users(conn, solo_tarjeta=False):
             continue
         print(u.__dict__)
         privilege = 'Admin' if u.privilege == const.USER_ADMIN else 'User'
-        # print('+ UID #{0}'.format(_u(u.uid)))
-        # print('  Name      : {0}'.format(_u(u.name)))
-        # print('  Privilege : {0}'.format(privilege))
-        # print('  Group ID  : {0}'.format(_u(u.group_id)))
-        # print('  User ID   : {0}'.format(_u(u.user_id)))
-        # if hasattr(u, "card"):
-        #     print('  Card      : {0}'.format(_u(u.card)))
+        try:
+            verif_mode = conn.get_user_verif_mode(u.uid)  # devuelve str o None (Group)
+            if verif_mode is None:
+                verif_mode = 'Group'  # modo por grupo
+        except Exception as e:
+            verif_mode = f'N/A ({e})'  # terminal no soporta, timeout, etc.
+        print('+ UID #{0}'.format(_u(u.uid)))
+        print('  Name      : {0}'.format(_u(u.name)))
+        print('  Privilege : {0}'.format(privilege))
+        print(f'  VerifMode : {verif_mode}')
+        print('  Group ID  : {0}'.format(_u(u.group_id)))
+        print('  User ID   : {0}'.format(_u(u.user_id)))
+        if hasattr(u, "card"):
+            print('  Card      : {0}'.format(_u(u.card)))
         print('')
         total += 1
     print('Total usuarios{0}: {1}'.format(' con tarjeta' if solo_tarjeta else '', total))
