@@ -4,6 +4,7 @@ import argparse
 import socket
 import sys
 import time
+import datetime
 
 from zk import ZK, const  # pyzk / zk
 
@@ -103,6 +104,17 @@ def voice_test(conn):
     conn.test_voice()
 
 
+def get_terminal_time(conn):
+    now = conn.get_time()
+    print('Fecha y hora del terminal: {0}'.format(now))
+
+
+def sync_terminal_time(conn):
+    now = datetime.datetime.now()
+    conn.set_time(now)
+    print('Fecha y hora del terminal establecida a: {0}'.format(now))
+
+
 def device_enable(conn, enable=True):
     if enable:
         print('Enabling device…')
@@ -126,6 +138,10 @@ def main():
     parser.add_argument('--disable', action='store_true', help='Deshabilitar temporalmente el dispositivo')
     parser.add_argument('--enable', action='store_true', help='Habilitar el dispositivo')
     parser.add_argument('--list-functions', action='store_true', help='Lista las funciones soportadas por el dispositivo')
+    parser.add_argument('--get-time', action='store_true',
+                        help='Obtiene la fecha y hora del terminal')
+    parser.add_argument('--sync-time', action='store_true',
+                        help='Establece la fecha y hora del terminal a la del sistema')
     args = parser.parse_args()
 
     zk = None
@@ -148,6 +164,12 @@ def main():
 
         if args.list_functions:
             list_functions(conn)
+
+        if args.get_time:
+            get_terminal_time(conn)
+
+        if args.sync_time:
+            sync_terminal_time(conn)
 
     except Exception as e:
         print('Error: {0}'.format(e))
