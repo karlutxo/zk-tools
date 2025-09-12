@@ -1,1 +1,2 @@
-pyzk>=0.9
+git+https://github.com/karlutxo/pyZK@master#egg=pyzk
+
