@@ -99,6 +99,25 @@ def list_users(conn, solo_tarjeta=False):
     print('Total usuarios{0}: {1}'.format(' con tarjeta' if solo_tarjeta else '', total))
 
 
+def set_verif_mode(conn, modo='RF'):
+    """Establece el modo de verificación para usuarios con tarjeta."""
+    print(f'Estableciendo modo de verificación "{modo}" a usuarios con tarjeta…')
+    usuarios = conn.get_users()
+    total = 0
+    actualizados = 0
+    for usuario in usuarios:
+        if not _has_valid_card(usuario):
+            continue
+        total += 1
+        try:
+            conn.set_user_verif_mode(usuario.uid, modo)
+            actualizados += 1
+            print(f'- UID #{_u(usuario.uid)}: modo "{modo}" asignado')
+        except Exception as exc:
+            print(f'  Error al establecer modo para UID #{_u(usuario.uid)}: {exc}')
+    print(f'Usuarios con tarjeta encontrados: {total}. Actualizados: {actualizados}.')
+
+
 def voice_test(conn):
     print('Voice Test…')
     conn.test_voice()
@@ -142,6 +161,8 @@ def main():
                         help='Obtiene la fecha y hora del terminal')
     parser.add_argument('--sync-time', action='store_true',
                         help='Establece la fecha y hora del terminal a la del sistema')
+    parser.add_argument('--set-verif-mode', action='store_true',
+                        help='Establece modo de verificación por tarjeta (RF) a usuarios con tarjeta')
     args = parser.parse_args()
 
     zk = None
@@ -170,6 +191,9 @@ def main():
 
         if args.sync_time:
             sync_terminal_time(conn)
+
+        if args.set_verif_mode:
+            set_verif_mode(conn)
 
     except Exception as e:
         print('Error: {0}'.format(e))
