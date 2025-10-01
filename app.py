@@ -310,15 +310,6 @@ INDEX_TEMPLATE = """
         <p>No se encontraron empleados para el terminal {{ ip }}.</p>
     {% endif %}
 
-    {% if selected and employees %}
-        <h2>Empleados seleccionados</h2>
-        <ul>
-            {% for uid in selected %}
-                {% set emp = employee_map.get(uid) %}
-                <li>{{ uid }} - {{ emp.name if emp else 'Empleado desconocido' }}</li>
-            {% endfor %}
-        </ul>
-    {% endif %}
     <script>
         document.addEventListener('DOMContentLoaded', function () {
             const selectAll = document.getElementById('select-all');
@@ -330,28 +321,66 @@ INDEX_TEMPLATE = """
 
             const checkboxes = Array.from(table.querySelectorAll('tbody input[type="checkbox"]'));
             const rows = Array.from(table.querySelectorAll('tbody tr'));
+            let lastClicked = null;
+
+            const updateSelectAllState = () => {
+                if (!selectAll) {
+                    return;
+                }
+                if (!checkboxes.length) {
+                    selectAll.checked = false;
+                    return;
+                }
+                selectAll.checked = checkboxes.every(item => item.checked);
+            };
+
+            const updateRowClasses = () => {
+                rows.forEach((row, index) => {
+                    const checkbox = checkboxes[index];
+                    if (!checkbox) {
+                        return;
+                    }
+                    row.classList.toggle('selected', checkbox.checked);
+                });
+            };
 
             if (selectAll) {
-                if (checkboxes.length && checkboxes.every(item => item.checked)) {
-                    selectAll.checked = true;
-                }
-
                 selectAll.addEventListener('change', function () {
                     checkboxes.forEach(cb => {
                         cb.checked = selectAll.checked;
                     });
-                });
-
-                checkboxes.forEach(cb => {
-                    cb.addEventListener('change', function () {
-                        if (!this.checked) {
-                            selectAll.checked = false;
-                        } else if (checkboxes.every(item => item.checked)) {
-                            selectAll.checked = true;
-                        }
-                    });
+                    updateRowClasses();
+                    updateSelectAllState();
                 });
             }
+
+            checkboxes.forEach(cb => {
+                cb.addEventListener('change', function () {
+                    updateRowClasses();
+                    updateSelectAllState();
+                });
+
+                cb.addEventListener('click', function (event) {
+                    if (event.shiftKey && lastClicked && lastClicked !== cb) {
+                        const currentIndex = checkboxes.indexOf(cb);
+                        const lastIndex = checkboxes.indexOf(lastClicked);
+                        if (currentIndex !== -1 && lastIndex !== -1) {
+                            const start = Math.min(currentIndex, lastIndex);
+                            const end = Math.max(currentIndex, lastIndex);
+                            const shouldCheck = cb.checked;
+                            for (let i = start; i <= end; i++) {
+                                checkboxes[i].checked = shouldCheck;
+                            }
+                            updateRowClasses();
+                            updateSelectAllState();
+                        }
+                    }
+                    lastClicked = cb;
+                });
+            });
+
+            updateRowClasses();
+            updateSelectAllState();
 
             if (filterInput) {
                 filterInput.addEventListener('input', function () {
