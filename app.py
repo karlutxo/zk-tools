@@ -414,11 +414,11 @@ INDEX_TEMPLATE = """
                         <div class="row g-3 align-items-end">
                             <div class="col-12 col-lg-6">
                                 <label for="employee-file" class="form-label">Archivo de empleados</label>
-                                <input type="file" name="employee_file" id="employee-file" class="form-control" accept=".json,.csv,.xlsx,.xlsm" aria-describedby="fileHelp">
+                                <div class="input-group">
+                                    <input type="file" name="employee_file" id="employee-file" class="form-control" accept=".json,.csv,.xlsx,.xlsm" aria-describedby="fileHelp">
+                                    <button type="submit" name="action" value="import" class="btn btn-success" {% if not terminal %}disabled{% endif %}>Importar</button>
+                                </div>
                                 <div id="fileHelp" class="form-text">Selecciona un archivo JSON, CSV o Excel para cargar empleados en la aplicación.</div>
-                            </div>
-                            <div class="col-12 col-lg-6 d-flex flex-wrap gap-2 justify-content-lg-end">
-                                <button type="submit" name="action" value="import" class="btn btn-success" {% if not terminal %}disabled{% endif %}>Importar</button>
                             </div>
                             <div class="col-12 d-flex flex-wrap gap-2 justify-content-md-end">
                                 <button type="submit" name="action" value="select" form="employees-form" class="btn btn-outline-primary" {% if not employees %}disabled{% endif %}>Guardar selección</button>
