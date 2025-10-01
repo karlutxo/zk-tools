@@ -26,3 +26,18 @@ python zk_tools_py.py 192.9.210.91 --disable --list-users --enable
 
 ### Documentación ###
 https://pyzk.readthedocs.io/en/stable/
+
+## Servidor web con Flask
+
+El proyecto incluye un servidor sencillo (`app.py`) que permite consultar la lista de empleados registrados en un terminal ZKTeco, mostrar su número de tarjeta y los datos biométricos disponibles, y seleccionar uno o varios empleados para usos posteriores.
+
+### Ejecución
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt flask
+python app.py
+```
+
+La aplicación se expone en `http://localhost:5000`. Desde allí se puede introducir la dirección IP (y opcionalmente el puerto) del terminal a consultar. Los empleados recuperados se muestran en una tabla con casillas de selección; la selección realizada se mantiene en memoria mientras la aplicación esté en ejecución.
