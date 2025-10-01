@@ -1,0 +1,158 @@
+<!doctype html>
+<html lang="es">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Empleados del terminal</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://cdn.datatables.net/1.13.6/css/dataTables.bootstrap5.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/styles.css') }}">
+</head>
+<body>
+    <nav class="navbar navbar-expand-lg navbar-dark bg-primary">
+        <div class="container-fluid">
+            <span class="navbar-brand mb-0 h1">Gestión de empleados ZKTeco</span>
+            <span id="selection-info" class="badge bg-light text-dark fs-6" data-total="{{ total_employees }}" data-selected="{{ selected_count }}" title="Resumen de la selección actual">Seleccionados: {{ selected_count }} de {{ total_employees }}</span>
+        </div>
+    </nav>
+    <main class="container my-4">
+        <form method="post" action="{{ url_for('main.index') }}" enctype="multipart/form-data" class="accordion mb-4 shadow-sm" id="controlAccordion">
+            <div class="accordion-item">
+                <h2 class="accordion-header" id="headingConnection">
+                    <button class="accordion-button" type="button" data-bs-toggle="collapse" data-bs-target="#collapseConnection" aria-expanded="true" aria-controls="collapseConnection">
+                        Terminales
+                    </button>
+                </h2>
+                <div id="collapseConnection" class="accordion-collapse collapse show" aria-labelledby="headingConnection" data-bs-parent="#controlAccordion">
+                    <div class="accordion-body">
+                        <div class="row g-3 align-items-end">
+                            <div class="col-12">
+                                <label for="terminal" class="form-label">Terminal</label>
+                                <input type="text" name="terminal" id="terminal" class="form-control" value="{{ terminal }}" placeholder="Ej. 192.168.1.10 o 192.168.1.10:4370" aria-describedby="terminalHelp">
+                                <div id="terminalHelp" class="form-text">Introduce la dirección del terminal. Puedes añadir el puerto con el formato IP:PUERTO.</div>
+                            </div>
+                            <div class="col-12">
+                                <div class="alert alert-info mb-0" role="status">
+                                    Usa estas opciones para conectarte con el terminal. Las herramientas de importación y exportación se encuentran en la sección siguiente.
+                                </div>
+                            </div>
+                            <div class="col-12 d-flex flex-wrap gap-2">
+                                <button type="submit" name="action" value="fetch" class="btn btn-primary">Leer empleados</button>
+                                <button type="submit" name="action" value="clear" class="btn btn-outline-secondary" onclick="return confirm('Esto eliminará a todos los empleados almacenados en memoria para este terminal. ¿Continuar?');">Limpiar</button>
+                                <button type="submit" name="action" value="delete" form="employees-form" class="btn btn-danger" {% if not employees %}disabled{% endif %} onclick="return confirm('¿Eliminar empleados seleccionados del terminal?');">Eliminar seleccionados</button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="accordion-item">
+                <h2 class="accordion-header" id="headingActions">
+                    <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#collapseActions" aria-expanded="false" aria-controls="collapseActions">
+                        Exportación e Importación
+                    </button>
+                </h2>
+                <div id="collapseActions" class="accordion-collapse collapse" aria-labelledby="headingActions" data-bs-parent="#controlAccordion">
+                    <div class="accordion-body">
+                        <div class="row g-3 align-items-end">
+                            <div class="col-12 col-lg-6">
+                                <label for="employee-file" class="form-label">Archivo de empleados</label>
+                                <div class="input-group">
+                                    <input type="file" name="employee_file" id="employee-file" class="form-control" accept=".json,.csv,.xlsx,.xlsm" aria-describedby="fileHelp">
+                                    <button type="submit" name="action" value="import" class="btn btn-success" {% if not terminal %}disabled{% endif %}>Importar</button>
+                                </div>
+                                <div id="fileHelp" class="form-text">Selecciona un archivo JSON, CSV o Excel para cargar empleados en la aplicación.</div>
+                            </div>
+                            <div class="col-12 d-flex flex-wrap gap-2 justify-content-md-end">
+                                <button type="submit" name="action" value="select" form="employees-form" class="btn btn-outline-primary" {% if not employees %}disabled{% endif %}>Guardar selección</button>
+                                <div class="btn-group">
+                                    <button type="button" class="btn btn-success dropdown-toggle" data-bs-toggle="dropdown" aria-expanded="false" {% if not employees %}disabled{% endif %}>
+                                        Exportar selección
+                                    </button>
+                                    <ul class="dropdown-menu dropdown-menu-end">
+                                        <li><button class="dropdown-item" type="submit" name="action" value="export_csv" form="employees-form" {% if not employees %}disabled{% endif %}>Exportar CSV</button></li>
+                                        <li><button class="dropdown-item" type="submit" name="action" value="export_json" form="employees-form" {% if not employees %}disabled{% endif %}>Exportar JSON</button></li>
+                                        <li><button class="dropdown-item" type="submit" name="action" value="export_excel" form="employees-form" {% if not employees %}disabled{% endif %}>Exportar Excel</button></li>
+                                    </ul>
+                                </div>
+                            </div>
+                        </div>
+                        <p class="text-muted small mt-3 mb-0">Las acciones se aplican únicamente a los empleados seleccionados en la tabla de abajo.</p>
+                    </div>
+                </div>
+            </div>
+        </form>
+
+        {% with messages = get_flashed_messages() %}
+            {% if messages %}
+                <div class="alert alert-warning alert-dismissible fade show" role="alert">
+                    <ul class="mb-0">
+                        {% for message in messages %}
+                        <li>{{ message }}</li>
+                        {% endfor %}
+                    </ul>
+                    <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Cerrar"></button>
+                </div>
+            {% endif %}
+        {% endwith %}
+
+        {% if employees %}
+        <div class="card shadow-sm">
+            <div class="card-body">
+                <form method="post" action="{{ url_for('main.index') }}" id="employees-form" class="table-responsive">
+                    <input type="hidden" name="terminal" value="{{ terminal }}">
+                    <table class="table table-striped table-hover align-middle" id="employees-table">
+                        <thead class="table-light">
+                            <tr>
+                                <th scope="col">Seleccionar</th>
+                                <th scope="col">UID</th>
+                                <th scope="col">Nombre</th>
+                                <th scope="col">User ID</th>
+                                <th scope="col">Tarjeta</th>
+                                <th scope="col">Privilegio</th>
+                                <th scope="col">Grupo</th>
+                                <th scope="col">Biometría</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for employee in employees %}
+                            <tr class="{% if employee.uid in selected %}selected-row{% endif %}">
+                                <td>
+                                    <div class="form-check">
+                                        <input class="form-check-input" type="checkbox" name="selected" value="{{ employee.uid }}" {% if employee.uid in selected %}checked{% endif %}>
+                                    </div>
+                                </td>
+                                <td>{{ employee.uid }}</td>
+                                <td>{{ employee.name }}</td>
+                                <td>{{ employee.user_id }}</td>
+                                <td>{{ employee.card }}</td>
+                                <td>{{ employee.privilege }}</td>
+                                <td>{{ employee.group_id }}</td>
+                                <td>
+                                    {% if employee.biometrics %}
+                                    <ul class="biometric-list">
+                                        {% for bio in employee.biometrics %}
+                                        <li>FID {{ bio.fid }}, Tipo {{ bio.type }}, Tamaño {{ bio.size or 'N/D' }}, Válido {{ bio.valid }}</li>
+                                        {% endfor %}
+                                    </ul>
+                                    {% else %}
+                                    <span class="text-muted">Sin datos</span>
+                                    {% endif %}
+                                </td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </form>
+            </div>
+        </div>
+        {% elif terminal %}
+            <div class="alert alert-info" role="alert">No se encontraron empleados para el terminal {{ terminal }}.</div>
+        {% endif %}
+    </main>
+    <script src="https://code.jquery.com/jquery-3.7.1.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
+    <script src="https://cdn.datatables.net/1.13.6/js/jquery.dataTables.min.js"></script>
+    <script src="https://cdn.datatables.net/1.13.6/js/dataTables.bootstrap5.min.js"></script>
+    <script src="{{ url_for('static', filename='js/app.js') }}"></script>
+</body>
+</html>
