@@ -31,6 +31,12 @@ https://pyzk.readthedocs.io/en/stable/
 
 El proyecto incluye un servidor sencillo (`app.py`) que permite consultar la lista de empleados registrados en un terminal ZKTeco, mostrar su número de tarjeta y los datos biométricos disponibles, y seleccionar uno o varios empleados para usos posteriores.
 
+La tabla de resultados admite seleccionar todos los empleados, filtrar por texto y ejecutar acciones sobre la selección actual:
+
+- Guardar los UID seleccionados en memoria durante la sesión.
+- Eliminar del terminal a los empleados seleccionados.
+- Exportar los registros seleccionados a CSV, JSON o Excel (`.xlsx`).
+
 ### Ejecución
 
 ```bash
@@ -40,4 +46,4 @@ pip install -r requirements.txt flask
 python app.py
 ```
 
-La aplicación se expone en `http://localhost:5000`. Desde allí se puede introducir la dirección IP (y opcionalmente el puerto) del terminal a consultar. Los empleados recuperados se muestran en una tabla con casillas de selección; la selección realizada se mantiene en memoria mientras la aplicación esté en ejecución.
+La aplicación se expone en `http://localhost:5000`. Desde allí se puede introducir la dirección IP (y opcionalmente el puerto) del terminal a consultar. Los empleados recuperados se muestran en una tabla con casillas de selección; la selección realizada se mantiene en memoria mientras la aplicación esté en ejecución y puede exportarse en los formatos disponibles o eliminarse del terminal.

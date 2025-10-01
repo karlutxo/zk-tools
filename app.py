@@ -1,17 +1,24 @@
 """Aplicación Flask para consultar y seleccionar empleados de terminales ZKTeco."""
 from __future__ import annotations
 
+import csv
+import json
 import logging
-from typing import Dict, List, Set
+from datetime import datetime
+from io import BytesIO, StringIO
+from typing import Dict, List, Sequence, Set, Tuple
 
 from flask import (
     Flask,
     flash,
+    make_response,
     redirect,
     render_template_string,
     request,
+    send_file,
     url_for,
 )
+from openpyxl import Workbook
 
 from zk_tools import DEFAULT_PORT, connect_with_retries
 
@@ -22,6 +29,16 @@ app.secret_key = "zk-tools-dev"
 _TERMINAL_EMPLOYEES: Dict[str, List[dict]] = {}
 # Almacenamiento en memoria de los UID seleccionados por terminal
 _SELECTED_EMPLOYEES: Dict[str, Set[str]] = {}
+
+EXPORT_COLUMNS: Sequence[Tuple[str, str]] = (
+    ("uid", "UID"),
+    ("name", "Nombre"),
+    ("user_id", "User ID"),
+    ("card", "Tarjeta"),
+    ("privilege", "Privilegio"),
+    ("group_id", "Grupo"),
+    ("biometrics", "Biometría"),
+)
 
 logger = logging.getLogger(__name__)
 
@@ -75,6 +92,111 @@ def fetch_employees(host: str, port: int = DEFAULT_PORT) -> List[dict]:
             logger.exception("Error al desconectar del terminal %s", host)
 
 
+def delete_employees(
+    host: str,
+    employees: List[dict],
+    port: int = DEFAULT_PORT,
+) -> Tuple[List[str], List[Tuple[str, str]]]:
+    """Elimina empleados del terminal y devuelve listas de eliminados y errores."""
+    zk = conn = None
+    deleted: List[str] = []
+    errors: List[Tuple[str, str]] = []
+    try:
+        zk, conn = connect_with_retries(host, port)
+        for employee in employees:
+            uid_str = employee.get("uid", "")
+            kwargs = {}
+            try:
+                uid_value = int(uid_str)
+            except (TypeError, ValueError):
+                uid_value = None
+
+            if uid_value is not None:
+                kwargs["uid"] = uid_value
+
+            user_id = (employee.get("user_id") or "").strip()
+            if user_id:
+                kwargs["user_id"] = user_id
+
+            if not kwargs:
+                errors.append((str(uid_str), "El registro no tiene identificadores válidos"))
+                continue
+
+            try:
+                conn.delete_user(**kwargs)
+            except Exception as exc:  # pragma: no cover - depende del terminal
+                errors.append((str(uid_str), str(exc)))
+            else:
+                deleted.append(str(uid_str))
+    finally:
+        try:
+            if conn:
+                conn.disconnect()
+        except Exception:  # pragma: no cover - errores de red
+            logger.exception("Error al desconectar del terminal %s", host)
+
+    return deleted, errors
+
+
+def _stringify_export_value(value):
+    if value is None:
+        return ""
+    if isinstance(value, (list, dict)):
+        return json.dumps(value, ensure_ascii=False)
+    return str(value)
+
+
+def build_export_response(host: str, employees: List[dict], export_format: str):
+    """Genera un archivo de exportación para los empleados seleccionados."""
+    timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+    safe_host = host.replace(":", "-")
+    base_filename = f"empleados_{safe_host}_{timestamp}"
+
+    if export_format == "json":
+        payload = json.dumps(employees, ensure_ascii=False, indent=2)
+        response = make_response(payload)
+        response.headers["Content-Type"] = "application/json; charset=utf-8"
+        response.headers["Content-Disposition"] = (
+            f"attachment; filename={base_filename}.json"
+        )
+        return response
+
+    if export_format == "csv":
+        output = StringIO()
+        writer = csv.writer(output)
+        writer.writerow([header for _, header in EXPORT_COLUMNS])
+        for employee in employees:
+            row = [_stringify_export_value(employee.get(key)) for key, _ in EXPORT_COLUMNS]
+            writer.writerow(row)
+        csv_data = output.getvalue()
+        response = make_response(csv_data)
+        response.headers["Content-Type"] = "text/csv; charset=utf-8"
+        response.headers["Content-Disposition"] = (
+            f"attachment; filename={base_filename}.csv"
+        )
+        return response
+
+    if export_format == "excel":
+        workbook = Workbook()
+        worksheet = workbook.active
+        worksheet.title = "Empleados"
+        worksheet.append([header for _, header in EXPORT_COLUMNS])
+        for employee in employees:
+            row = [_stringify_export_value(employee.get(key)) for key, _ in EXPORT_COLUMNS]
+            worksheet.append(row)
+        output = BytesIO()
+        workbook.save(output)
+        output.seek(0)
+        return send_file(
+            output,
+            as_attachment=True,
+            download_name=f"{base_filename}.xlsx",
+            mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        )
+
+    raise ValueError("Formato de exportación no soportado.")
+
+
 INDEX_TEMPLATE = """
 <!doctype html>
 <html lang=\"es\">
@@ -91,6 +213,8 @@ INDEX_TEMPLATE = """
         .selected { background-color: #e6f7ff; }
         .biometric-list { margin: 0; padding-left: 1rem; }
         .messages { color: #c0392b; }
+        .table-controls { display: flex; align-items: center; gap: 1rem; margin-bottom: 0.75rem; }
+        .hidden { display: none; }
     </style>
 </head>
 <body>
@@ -116,9 +240,17 @@ INDEX_TEMPLATE = """
 
     {% if employees %}
     <form method=\"post\" action=\"{{ url_for('index') }}\">
-        <input type=\"hidden\" name=\"action\" value=\"select\">
         <input type=\"hidden\" name=\"ip\" value=\"{{ ip }}\">
-        <table>
+        <input type=\"hidden\" name=\"port\" value=\"{{ port }}\">
+        <div class=\"table-controls\">
+            <label>
+                <input type=\"checkbox\" id=\"select-all\">
+                Seleccionar todo
+            </label>
+            <label for=\"filter\">Filtrar:</label>
+            <input type=\"search\" id=\"filter\" placeholder=\"Escribe para filtrar por UID, nombre, tarjeta...\">
+        </div>
+        <table id=\"employees-table\">
             <thead>
                 <tr>
                     <th>Seleccionar</th>
@@ -133,7 +265,12 @@ INDEX_TEMPLATE = """
             </thead>
             <tbody>
                 {% for employee in employees %}
-                <tr class=\"{% if employee.uid in selected %}selected{% endif %}\">
+                <tr class=\"{% if employee.uid in selected %}selected{% endif %}\" data-search=\"{{ (
+                    (employee.uid or '') ~ ' ' ~
+                    (employee.name or '') ~ ' ' ~
+                    (employee.user_id or '') ~ ' ' ~
+                    (employee.card or '')
+                )|lower }}\">
                     <td>
                         <input type=\"checkbox\" name=\"selected\" value=\"{{ employee.uid }}\" {% if employee.uid in selected %}checked{% endif %}>
                     </td>
@@ -159,7 +296,14 @@ INDEX_TEMPLATE = """
             </tbody>
         </table>
         <div class=\"actions\">
-            <button type=\"submit\">Guardar selección</button>
+            <button type=\"submit\" name=\"action\" value=\"select\">Guardar selección</button>
+            <button type=\"submit\" name=\"action\" value=\"delete\" onclick=\"return confirm('¿Eliminar empleados seleccionados del terminal?');\">Eliminar seleccionados</button>
+        </div>
+        <div class=\"actions\">
+            <span>Exportar selección:</span>
+            <button type=\"submit\" name=\"action\" value=\"export_csv\">CSV</button>
+            <button type=\"submit\" name=\"action\" value=\"export_json\">JSON</button>
+            <button type=\"submit\" name=\"action\" value=\"export_excel\">Excel</button>
         </div>
     </form>
     {% elif ip %}
@@ -175,6 +319,55 @@ INDEX_TEMPLATE = """
             {% endfor %}
         </ul>
     {% endif %}
+    <script>
+        document.addEventListener('DOMContentLoaded', function () {
+            const selectAll = document.getElementById('select-all');
+            const filterInput = document.getElementById('filter');
+            const table = document.getElementById('employees-table');
+            if (!table) {
+                return;
+            }
+
+            const checkboxes = Array.from(table.querySelectorAll('tbody input[type="checkbox"]'));
+            const rows = Array.from(table.querySelectorAll('tbody tr'));
+
+            if (selectAll) {
+                if (checkboxes.length && checkboxes.every(item => item.checked)) {
+                    selectAll.checked = true;
+                }
+
+                selectAll.addEventListener('change', function () {
+                    checkboxes.forEach(cb => {
+                        cb.checked = selectAll.checked;
+                    });
+                });
+
+                checkboxes.forEach(cb => {
+                    cb.addEventListener('change', function () {
+                        if (!this.checked) {
+                            selectAll.checked = false;
+                        } else if (checkboxes.every(item => item.checked)) {
+                            selectAll.checked = true;
+                        }
+                    });
+                });
+            }
+
+            if (filterInput) {
+                filterInput.addEventListener('input', function () {
+                    const query = this.value.trim().toLowerCase();
+                    rows.forEach(row => {
+                        const haystack = row.getAttribute('data-search') || '';
+                        if (!query || haystack.includes(query)) {
+                            row.classList.remove('hidden');
+                        } else {
+                            row.classList.add('hidden');
+                        }
+                    });
+                });
+            }
+        });
+    </script>
 </body>
 </html>
 """
@@ -208,6 +401,68 @@ def index():
             selected_uids = set(request.form.getlist("selected"))
             _SELECTED_EMPLOYEES[ip] = selected_uids
             return redirect(url_for("index", ip=ip, port=port))
+        elif action == "delete" and ip:
+            selected_uids = set(request.form.getlist("selected"))
+            if not selected_uids:
+                flash("Selecciona al menos un empleado para eliminar.")
+                return redirect(url_for("index", ip=ip, port=port))
+
+            cached_employees = _TERMINAL_EMPLOYEES.get(ip, [])
+            to_delete = [emp for emp in cached_employees if emp.get("uid") in selected_uids]
+
+            if not to_delete:
+                flash(
+                    "Los empleados seleccionados no están disponibles en caché. Consulta nuevamente el terminal."
+                )
+                return redirect(url_for("index", ip=ip, port=port))
+
+            try:
+                deleted, errors = delete_employees(ip, to_delete, port=port)
+            except Exception as exc:  # pragma: no cover - dependiente del dispositivo
+                logger.exception("Error al eliminar empleados del terminal %s", ip)
+                flash(f"No se pudieron eliminar los empleados seleccionados: {exc}")
+            else:
+                if deleted:
+                    flash(f"Se eliminaron {len(deleted)} empleado(s) del terminal.")
+                    _TERMINAL_EMPLOYEES[ip] = [
+                        emp for emp in cached_employees if emp.get("uid") not in deleted
+                    ]
+                    selected_cache = _SELECTED_EMPLOYEES.get(ip, set())
+                    selected_cache.difference_update(deleted)
+                    _SELECTED_EMPLOYEES[ip] = selected_cache
+                if errors:
+                    for uid, message in errors:
+                        flash(f"No se pudo eliminar el empleado {uid}: {message}")
+            return redirect(url_for("index", ip=ip, port=port))
+        elif action in {"export_csv", "export_json", "export_excel"} and ip:
+            selected_uids = set(request.form.getlist("selected"))
+            if not selected_uids:
+                flash("Selecciona al menos un empleado para exportar.")
+                return redirect(url_for("index", ip=ip, port=port))
+
+            cached_employees = _TERMINAL_EMPLOYEES.get(ip, [])
+            if not cached_employees:
+                flash(
+                    "No hay empleados en caché para exportar. Consulta primero el terminal."
+                )
+                return redirect(url_for("index", ip=ip, port=port))
+
+            selected_employees = [
+                emp for emp in cached_employees if emp.get("uid") in selected_uids
+            ]
+            if not selected_employees:
+                flash(
+                    "Los empleados seleccionados no están disponibles en caché. Consulta nuevamente el terminal."
+                )
+                return redirect(url_for("index", ip=ip, port=port))
+
+            _SELECTED_EMPLOYEES[ip] = selected_uids
+            export_format = action.split("_", 1)[1]
+            try:
+                return build_export_response(ip, selected_employees, export_format)
+            except ValueError as exc:
+                flash(str(exc))
+                return redirect(url_for("index", ip=ip, port=port))
 
     if ip and ip in _TERMINAL_EMPLOYEES:
         employees = _TERMINAL_EMPLOYEES[ip]
