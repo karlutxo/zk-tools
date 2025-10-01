@@ -347,251 +347,307 @@ def parse_employee_file(file_storage) -> List[dict]:
 
 INDEX_TEMPLATE = """
 <!doctype html>
-<html lang=\"es\">
+<html lang="es">
 <head>
-    <meta charset=\"utf-8\">
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Empleados del terminal</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://cdn.datatables.net/1.13.6/css/dataTables.bootstrap5.min.css" rel="stylesheet">
     <style>
-        body { font-family: Arial, sans-serif; margin: 0; background-color: #f8f9fa; color: #333; }
-        main { padding: 1rem 2rem 2rem; }
-        h1 { margin: 0; font-size: 1.6rem; }
-        table { border-collapse: collapse; width: 100%; background-color: #fff; }
-        th, td { border: 1px solid #ccc; padding: 0.5rem; text-align: left; }
-        th { background-color: #f2f2f2; }
-        .app-header { position: sticky; top: 0; z-index: 100; background-color: #fff; padding: 1rem 2rem; box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1); display: flex; flex-direction: column; gap: 0.75rem; }
-        .header-main { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 0.5rem; }
-        .header-form, .header-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 0.75rem; }
-        .header-form label, .header-toolbar label { display: flex; flex-direction: column; gap: 0.25rem; font-size: 0.9rem; }
-        .checkbox-label { flex-direction: row; align-items: center; }
-        .header-form input[type=\"text\"], .header-toolbar input[type=\"search\"] { padding: 0.35rem 0.5rem; border: 1px solid #bbb; border-radius: 4px; min-width: 14rem; }
-        .header-form input[type=\"file\"] { max-width: 18rem; }
-        .header-toolbar input[type=\"search\"] { min-width: 16rem; }
-        .button-group { display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: center; }
-        button { background-color: #1976d2; color: #fff; border: none; padding: 0.45rem 0.9rem; border-radius: 4px; cursor: pointer; font-size: 0.9rem; transition: background-color 0.2s ease-in-out; }
-        button:hover { background-color: #125ea5; }
-        button:disabled { opacity: 0.6; cursor: not-allowed; }
-        .action-delete { background-color: #c62828; }
-        .action-delete:hover { background-color: #a61d1d; }
-        .action-clear { background-color: #6d4c41; }
-        .action-clear:hover { background-color: #5d4037; }
-        .action-export { background-color: #00897b; }
-        .action-export:hover { background-color: #00695c; }
-        .messages { color: #c0392b; margin: 1rem 0; }
-        .messages li { margin-bottom: 0.25rem; }
-        .employees-form { margin-top: 1.5rem; }
-        .selected { background-color: #e6f7ff; }
-        .biometric-list { margin: 0; padding-left: 1rem; }
-        .hidden { display: none; }
-        #selection-info { font-weight: 600; color: #1976d2; }
-        @media (max-width: 768px) {
-            .header-form input[type=\"text\"], .header-toolbar input[type=\"search\"] { min-width: 0; width: 100%; }
-            .header-form, .header-toolbar { flex-direction: column; align-items: stretch; }
-            .button-group { justify-content: flex-start; }
-            main { padding: 1rem; }
-            .app-header { padding: 1rem; }
-        }
+        body { background-color: #f8f9fa; }
+        main { padding-bottom: 4rem; }
+        .selected-row { background-color: #e8f4ff !important; }
+        .biometric-list { margin-bottom: 0; padding-left: 1.25rem; }
+        .accordion-button:not(.collapsed) { background-color: #0d6efd; color: #fff; }
+        .accordion-button:focus { box-shadow: none; }
+        .dataTables_wrapper .dataTables_paginate .paginate_button { border-radius: 0.375rem; }
+        .dataTables_wrapper .dataTables_paginate .paginate_button.current { background-color: #0d6efd !important; color: #fff !important; }
+        .dataTables_wrapper .dataTables_length select { width: auto; }
     </style>
 </head>
 <body>
-    <header class=\"app-header\">
-        <div class=\"header-main\">
-            <h1>Consulta de empleados</h1>
-            <span id=\"selection-info\" data-total=\"{{ total_employees }}\" data-selected=\"{{ selected_count }}\" title=\"Resumen de la selección actual.\">Seleccionados: {{ selected_count }} de {{ total_employees }}</span>
+    <nav class="navbar navbar-expand-lg navbar-dark bg-primary">
+        <div class="container-fluid">
+            <span class="navbar-brand mb-0 h1">Gestión de empleados ZKTeco</span>
+            <span id="selection-info" class="badge bg-light text-dark fs-6" data-total="{{ total_employees }}" data-selected="{{ selected_count }}" title="Resumen de la selección actual">Seleccionados: {{ selected_count }} de {{ total_employees }}</span>
         </div>
-        <form method=\"post\" action=\"{{ url_for('index') }}\" enctype=\"multipart/form-data\" class=\"header-form\">
-            <label for=\"terminal\" title=\"Introduce la dirección del terminal. Puedes añadir el puerto con el formato IP:PUERTO.\">
-                Terminal
-                <input type=\"text\" name=\"terminal\" id=\"terminal\" value=\"{{ terminal }}\" placeholder=\"Ej. 192.168.1.10 o 192.168.1.10:4370\">
-            </label>
-            <label for=\"employee-file\" title=\"Selecciona un archivo JSON, CSV o Excel para cargar empleados en la aplicación.\">
-                Archivo de empleados
-                <input type=\"file\" name=\"employee_file\" id=\"employee-file\" accept=\".json,.csv,.xlsx,.xlsm\">
-            </label>
-            <div class=\"button-group\">
-                <button type=\"submit\" name=\"action\" value=\"fetch\" title=\"Consulta el terminal indicado y muestra sus empleados.\">Leer empleados</button>
-                <button type=\"submit\" name=\"action\" value=\"import\" title=\"Importa empleados desde el archivo seleccionado y los guarda en memoria.\">Importar</button>
-                <button type=\"submit\" name=\"action\" value=\"clear\" class=\"action-clear\" title=\"Limpia los empleados almacenados en memoria. Si hay un terminal especificado, solo afecta a ese equipo.\" onclick=\"return confirm('Esto eliminará a todos los empleados almacenados en memoria para este terminal. ¿Continuar?');\">Limpiar memoria</button>
+    </nav>
+    <main class="container my-4">
+        <div class="accordion mb-4 shadow-sm" id="controlAccordion">
+            <div class="accordion-item">
+                <h2 class="accordion-header" id="headingConnection">
+                    <button class="accordion-button" type="button" data-bs-toggle="collapse" data-bs-target="#collapseConnection" aria-expanded="true" aria-controls="collapseConnection">
+                        Conexión y carga de datos
+                    </button>
+                </h2>
+                <div id="collapseConnection" class="accordion-collapse collapse show" aria-labelledby="headingConnection" data-bs-parent="#controlAccordion">
+                    <div class="accordion-body">
+                        <form method="post" action="{{ url_for('index') }}" enctype="multipart/form-data" class="row g-3 align-items-end">
+                            <div class="col-12">
+                                <label for="terminal" class="form-label">Terminal</label>
+                                <input type="text" name="terminal" id="terminal" class="form-control" value="{{ terminal }}" placeholder="Ej. 192.168.1.10 o 192.168.1.10:4370" aria-describedby="terminalHelp">
+                                <div id="terminalHelp" class="form-text">Introduce la dirección del terminal. Puedes añadir el puerto con el formato IP:PUERTO.</div>
+                            </div>
+                            <div class="col-12 col-md-6">
+                                <label for="employee-file" class="form-label">Archivo de empleados</label>
+                                <input type="file" name="employee_file" id="employee-file" class="form-control" accept=".json,.csv,.xlsx,.xlsm" aria-describedby="fileHelp">
+                                <div id="fileHelp" class="form-text">Selecciona un archivo JSON, CSV o Excel para cargar empleados en la aplicación.</div>
+                            </div>
+                            <div class="col-12 col-md-6">
+                                <div class="alert alert-info mb-3 mb-md-2" role="status">
+                                    Usa estas opciones para leer directamente del terminal o importar un archivo de empleados.
+                                </div>
+                            </div>
+                            <div class="col-12 d-flex flex-wrap gap-2">
+                                <button type="submit" name="action" value="fetch" class="btn btn-primary">Leer empleados</button>
+                                <button type="submit" name="action" value="import" class="btn btn-success">Importar</button>
+                                <button type="submit" name="action" value="clear" class="btn btn-outline-secondary" onclick="return confirm('Esto eliminará a todos los empleados almacenados en memoria para este terminal. ¿Continuar?');">Limpiar memoria</button>
+                            </div>
+                        </form>
+                    </div>
+                </div>
             </div>
-        </form>
-        <div class=\"header-toolbar\">
-            <label for=\"select-all\" class=\"checkbox-label\" title=\"Activa o desactiva la selección de todos los empleados visibles.\">
-                <input type=\"checkbox\" id=\"select-all\" {% if not employees %}disabled{% endif %}>
-                Seleccionar todo
-            </label>
-            <label for=\"filter\" title=\"Filtra la tabla escribiendo parte del UID, nombre, usuario o tarjeta.\">
-                Filtro
-                <input type=\"search\" id=\"filter\" placeholder=\"Escribe para filtrar por UID, nombre, tarjeta...\" {% if not employees %}disabled{% endif %}>
-            </label>
-            <div class=\"button-group\">
-                <button type=\"submit\" name=\"action\" value=\"select\" form=\"employees-form\" title=\"Guarda la selección actual de empleados.\" {% if not employees %}disabled{% endif %}>Guardar selección</button>
-                <button type=\"submit\" name=\"action\" value=\"delete\" form=\"employees-form\" class=\"action-delete\" title=\"Elimina del terminal a los empleados seleccionados.\" {% if not employees %}disabled{% endif %} onclick=\"return confirm('¿Eliminar empleados seleccionados del terminal?');\">Eliminar seleccionados</button>
-                <button type=\"submit\" name=\"action\" value=\"export_csv\" form=\"employees-form\" class=\"action-export\" title=\"Descarga la selección como archivo CSV.\" {% if not employees %}disabled{% endif %}>Exportar CSV</button>
-                <button type=\"submit\" name=\"action\" value=\"export_json\" form=\"employees-form\" class=\"action-export\" title=\"Descarga la selección como archivo JSON.\" {% if not employees %}disabled{% endif %}>Exportar JSON</button>
-                <button type=\"submit\" name=\"action\" value=\"export_excel\" form=\"employees-form\" class=\"action-export\" title=\"Descarga la selección como archivo de Excel.\" {% if not employees %}disabled{% endif %}>Exportar Excel</button>
+            <div class="accordion-item">
+                <h2 class="accordion-header" id="headingActions">
+                    <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#collapseActions" aria-expanded="false" aria-controls="collapseActions">
+                        Opciones de selección y exportación
+                    </button>
+                </h2>
+                <div id="collapseActions" class="accordion-collapse collapse" aria-labelledby="headingActions" data-bs-parent="#controlAccordion">
+                    <div class="accordion-body">
+                        <div class="row g-3 align-items-center">
+                            <div class="col-12 col-md-4">
+                                <div class="form-check">
+                                    <input class="form-check-input" type="checkbox" id="select-all" {% if not employees %}disabled{% endif %}>
+                                    <label class="form-check-label" for="select-all">Seleccionar todo (vista actual)</label>
+                                </div>
+                            </div>
+                            <div class="col-12 col-md-8 d-flex flex-wrap gap-2 justify-content-md-end">
+                                <button type="submit" name="action" value="select" form="employees-form" class="btn btn-outline-primary" {% if not employees %}disabled{% endif %}>Guardar selección</button>
+                                <button type="submit" name="action" value="delete" form="employees-form" class="btn btn-danger" {% if not employees %}disabled{% endif %} onclick="return confirm('¿Eliminar empleados seleccionados del terminal?');">Eliminar seleccionados</button>
+                                <div class="btn-group">
+                                    <button type="button" class="btn btn-success dropdown-toggle" data-bs-toggle="dropdown" aria-expanded="false" {% if not employees %}disabled{% endif %}>
+                                        Exportar selección
+                                    </button>
+                                    <ul class="dropdown-menu dropdown-menu-end">
+                                        <li><button class="dropdown-item" type="submit" name="action" value="export_csv" form="employees-form" {% if not employees %}disabled{% endif %}>Exportar CSV</button></li>
+                                        <li><button class="dropdown-item" type="submit" name="action" value="export_json" form="employees-form" {% if not employees %}disabled{% endif %}>Exportar JSON</button></li>
+                                        <li><button class="dropdown-item" type="submit" name="action" value="export_excel" form="employees-form" {% if not employees %}disabled{% endif %}>Exportar Excel</button></li>
+                                    </ul>
+                                </div>
+                            </div>
+                        </div>
+                        <p class="text-muted small mt-3 mb-0">Las acciones se aplican únicamente a los empleados seleccionados en la tabla de abajo.</p>
+                    </div>
+                </div>
             </div>
         </div>
-    </header>
-    <main>
+
         {% with messages = get_flashed_messages() %}
             {% if messages %}
-                <ul class=\"messages\">
-                    {% for message in messages %}
-                    <li>{{ message }}</li>
-                    {% endfor %}
-                </ul>
+                <div class="alert alert-warning alert-dismissible fade show" role="alert">
+                    <ul class="mb-0">
+                        {% for message in messages %}
+                        <li>{{ message }}</li>
+                        {% endfor %}
+                    </ul>
+                    <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Cerrar"></button>
+                </div>
             {% endif %}
         {% endwith %}
+
         {% if employees %}
-        <form method=\"post\" action=\"{{ url_for('index') }}\" id=\"employees-form\" class=\"employees-form\">
-            <input type=\"hidden\" name=\"terminal\" value=\"{{ terminal }}\">
-            <table id=\"employees-table\">
-                <thead>
-                    <tr>
-                        <th>Seleccionar</th>
-                        <th>UID</th>
-                        <th>Nombre</th>
-                        <th>User ID</th>
-                        <th>Tarjeta</th>
-                        <th>Privilegio</th>
-                        <th>Grupo</th>
-                        <th>Biometría</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    {% for employee in employees %}
-                    <tr class=\"{% if employee.uid in selected %}selected{% endif %}\" data-search=\"{{ (
-                        (employee.uid or '') ~ ' ' ~
-                        (employee.name or '') ~ ' ' ~
-                        (employee.user_id or '') ~ ' ' ~
-                        (employee.card or '')
-                    )|lower }}\">
-                        <td>
-                            <input type=\"checkbox\" name=\"selected\" value=\"{{ employee.uid }}\" {% if employee.uid in selected %}checked{% endif %}>
-                        </td>
-                        <td>{{ employee.uid }}</td>
-                        <td>{{ employee.name }}</td>
-                        <td>{{ employee.user_id }}</td>
-                        <td>{{ employee.card }}</td>
-                        <td>{{ employee.privilege }}</td>
-                        <td>{{ employee.group_id }}</td>
-                        <td>
-                            {% if employee.biometrics %}
-                            <ul class=\"biometric-list\">
-                                {% for bio in employee.biometrics %}
-                                <li>FID {{ bio.fid }}, Tipo {{ bio.type }}, Tamaño {{ bio.size or 'N/D' }}, Válido {{ bio.valid }}</li>
-                                {% endfor %}
-                            </ul>
-                            {% else %}
-                            Sin datos
-                            {% endif %}
-                        </td>
-                    </tr>
-                    {% endfor %}
-                </tbody>
-            </table>
-        </form>
+        <div class="card shadow-sm">
+            <div class="card-body">
+                <form method="post" action="{{ url_for('index') }}" id="employees-form" class="table-responsive">
+                    <input type="hidden" name="terminal" value="{{ terminal }}">
+                    <table class="table table-striped table-hover align-middle" id="employees-table">
+                        <thead class="table-light">
+                            <tr>
+                                <th scope="col">Seleccionar</th>
+                                <th scope="col">UID</th>
+                                <th scope="col">Nombre</th>
+                                <th scope="col">User ID</th>
+                                <th scope="col">Tarjeta</th>
+                                <th scope="col">Privilegio</th>
+                                <th scope="col">Grupo</th>
+                                <th scope="col">Biometría</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for employee in employees %}
+                            <tr class="{% if employee.uid in selected %}selected-row{% endif %}">
+                                <td>
+                                    <div class="form-check">
+                                        <input class="form-check-input" type="checkbox" name="selected" value="{{ employee.uid }}" {% if employee.uid in selected %}checked{% endif %}>
+                                    </div>
+                                </td>
+                                <td>{{ employee.uid }}</td>
+                                <td>{{ employee.name }}</td>
+                                <td>{{ employee.user_id }}</td>
+                                <td>{{ employee.card }}</td>
+                                <td>{{ employee.privilege }}</td>
+                                <td>{{ employee.group_id }}</td>
+                                <td>
+                                    {% if employee.biometrics %}
+                                    <ul class="biometric-list">
+                                        {% for bio in employee.biometrics %}
+                                        <li>FID {{ bio.fid }}, Tipo {{ bio.type }}, Tamaño {{ bio.size or 'N/D' }}, Válido {{ bio.valid }}</li>
+                                        {% endfor %}
+                                    </ul>
+                                    {% else %}
+                                    <span class="text-muted">Sin datos</span>
+                                    {% endif %}
+                                </td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </form>
+            </div>
+        </div>
         {% elif terminal %}
-            <p>No se encontraron empleados para el terminal {{ terminal }}.</p>
+            <div class="alert alert-info" role="alert">No se encontraron empleados para el terminal {{ terminal }}.</div>
         {% endif %}
     </main>
+    <script src="https://code.jquery.com/jquery-3.7.1.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
+    <script src="https://cdn.datatables.net/1.13.6/js/jquery.dataTables.min.js"></script>
+    <script src="https://cdn.datatables.net/1.13.6/js/dataTables.bootstrap5.min.js"></script>
     <script>
         document.addEventListener('DOMContentLoaded', function () {
+            const selectionInfo = document.getElementById('selection-info');
             const selectAll = document.getElementById('select-all');
-            const filterInput = document.getElementById('filter');
-            const table = document.getElementById('employees-table');
-            if (!table) {
+            const tableElement = document.getElementById('employees-table');
+
+            if (!tableElement) {
+                if (selectionInfo) {
+                    selectionInfo.dataset.total = '0';
+                    selectionInfo.dataset.selected = '0';
+                    selectionInfo.textContent = 'Seleccionados: 0 de 0';
+                }
                 return;
             }
 
-            const checkboxes = Array.from(table.querySelectorAll('tbody input[type="checkbox"]'));
-            const rows = Array.from(table.querySelectorAll('tbody tr'));
-            let lastClicked = null;
-            const selectionInfo = document.getElementById('selection-info');
-            const totalEmployees = selectionInfo ? parseInt(selectionInfo.dataset.total || '0', 10) : checkboxes.length;
+            const $table = $('#employees-table');
+            const dataTable = $table.DataTable({
+                pageLength: 25,
+                order: [[1, 'asc']],
+                autoWidth: false,
+                columnDefs: [
+                    { orderable: false, targets: 0 },
+                ],
+                language: {
+                    decimal: ',',
+                    thousands: '.',
+                    emptyTable: 'Sin datos disponibles en la tabla',
+                    info: 'Mostrando _START_ a _END_ de _TOTAL_ empleados',
+                    infoEmpty: 'Mostrando 0 a 0 de 0 empleados',
+                    infoFiltered: '(filtrado de _MAX_ registros totales)',
+                    lengthMenu: 'Mostrar _MENU_ registros',
+                    loadingRecords: 'Cargando...',
+                    processing: 'Procesando...',
+                    search: 'Buscar:',
+                    zeroRecords: 'No se encontraron coincidencias',
+                    paginate: {
+                        first: 'Primero',
+                        last: 'Último',
+                        next: 'Siguiente',
+                        previous: 'Anterior'
+                    },
+                },
+                dom: '<"row mb-3"<"col-sm-12 col-md-6"l><"col-sm-12 col-md-6 text-md-end"f>>tip',
+            });
 
-            const updateSelectAllState = () => {
-                if (!selectAll) {
-                    return;
-                }
-                if (!checkboxes.length) {
-                    selectAll.checked = false;
-                    return;
-                }
-                selectAll.checked = checkboxes.every(item => item.checked);
-            };
+            const getAllCheckboxes = () => $table.find('tbody input[type="checkbox"]');
 
             const updateSelectionInfo = () => {
                 if (!selectionInfo) {
                     return;
                 }
-                const selectedCount = checkboxes.filter(cb => cb.checked).length;
+                const selectedCount = getAllCheckboxes().filter(':checked').length;
+                const totalEmployees = selectionInfo.dataset.total ? parseInt(selectionInfo.dataset.total, 10) : getAllCheckboxes().length;
                 selectionInfo.dataset.selected = String(selectedCount);
                 selectionInfo.textContent = `Seleccionados: ${selectedCount} de ${totalEmployees}`;
             };
 
             const updateRowClasses = () => {
-                rows.forEach((row, index) => {
-                    const checkbox = checkboxes[index];
-                    if (!checkbox) {
-                        return;
-                    }
-                    row.classList.toggle('selected', checkbox.checked);
+                getAllCheckboxes().each(function () {
+                    const $row = $(this).closest('tr');
+                    $row.toggleClass('selected-row', this.checked);
                 });
-                updateSelectionInfo();
             };
+
+            const updateSelectAllState = () => {
+                if (!selectAll) {
+                    return;
+                }
+                const visibleCheckboxes = $table.find('tbody tr:visible input[type="checkbox"]');
+                if (!visibleCheckboxes.length) {
+                    selectAll.checked = false;
+                    selectAll.indeterminate = false;
+                    return;
+                }
+                const checkedVisible = visibleCheckboxes.filter(':checked').length;
+                if (checkedVisible === 0) {
+                    selectAll.checked = false;
+                    selectAll.indeterminate = false;
+                } else if (checkedVisible === visibleCheckboxes.length) {
+                    selectAll.checked = true;
+                    selectAll.indeterminate = false;
+                } else {
+                    selectAll.checked = false;
+                    selectAll.indeterminate = true;
+                }
+            };
+
+            let lastClicked = null;
 
             if (selectAll) {
                 selectAll.addEventListener('change', function () {
-                    checkboxes.forEach(cb => {
-                        cb.checked = selectAll.checked;
-                    });
+                    const visibleCheckboxes = $table.find('tbody tr:visible input[type="checkbox"]');
+                    visibleCheckboxes.prop('checked', selectAll.checked);
                     updateRowClasses();
                     updateSelectAllState();
+                    updateSelectionInfo();
                 });
             }
 
-            checkboxes.forEach(cb => {
-                cb.addEventListener('change', function () {
-                    updateRowClasses();
-                    updateSelectAllState();
-                });
+            $table.on('change', 'tbody input[type="checkbox"]', function () {
+                updateRowClasses();
+                updateSelectAllState();
+                updateSelectionInfo();
+            });
 
-                cb.addEventListener('click', function (event) {
-                    if (event.shiftKey && lastClicked && lastClicked !== cb) {
-                        const currentIndex = checkboxes.indexOf(cb);
-                        const lastIndex = checkboxes.indexOf(lastClicked);
-                        if (currentIndex !== -1 && lastIndex !== -1) {
-                            const start = Math.min(currentIndex, lastIndex);
-                            const end = Math.max(currentIndex, lastIndex);
-                            const shouldCheck = cb.checked;
-                            for (let i = start; i <= end; i++) {
-                                checkboxes[i].checked = shouldCheck;
-                            }
-                            updateRowClasses();
-                            updateSelectAllState();
+            $table.on('click', 'tbody input[type="checkbox"]', function (event) {
+                const checkboxList = getAllCheckboxes().toArray();
+                if (event.shiftKey && lastClicked && lastClicked !== this) {
+                    const currentIndex = checkboxList.indexOf(this);
+                    const lastIndex = checkboxList.indexOf(lastClicked);
+                    if (currentIndex !== -1 && lastIndex !== -1) {
+                        const start = Math.min(currentIndex, lastIndex);
+                        const end = Math.max(currentIndex, lastIndex);
+                        const shouldCheck = this.checked;
+                        for (let i = start; i <= end; i += 1) {
+                            checkboxList[i].checked = shouldCheck;
                         }
+                        updateRowClasses();
+                        updateSelectAllState();
+                        updateSelectionInfo();
                     }
-                    lastClicked = cb;
-                });
+                }
+                lastClicked = this;
+            });
+
+            $table.on('draw.dt', function () {
+                updateRowClasses();
+                updateSelectAllState();
             });
 
             updateRowClasses();
             updateSelectAllState();
             updateSelectionInfo();
-
-            if (filterInput) {
-                filterInput.addEventListener('input', function () {
-                    const query = this.value.trim().toLowerCase();
-                    rows.forEach(row => {
-                        const haystack = row.getAttribute('data-search') || '';
-                        if (!query || haystack.includes(query)) {
-                            row.classList.remove('hidden');
-                        } else {
-                            row.classList.add('hidden');
-                        }
-                    });
-                });
-            }
         });
     </script>
 </body>
