@@ -374,56 +374,52 @@ INDEX_TEMPLATE = """
         </div>
     </nav>
     <main class="container my-4">
-        <div class="accordion mb-4 shadow-sm" id="controlAccordion">
+        <form method="post" action="{{ url_for('index') }}" enctype="multipart/form-data" class="accordion mb-4 shadow-sm" id="controlAccordion">
             <div class="accordion-item">
                 <h2 class="accordion-header" id="headingConnection">
                     <button class="accordion-button" type="button" data-bs-toggle="collapse" data-bs-target="#collapseConnection" aria-expanded="true" aria-controls="collapseConnection">
-                        Conexión y carga de datos
+                        Terminales
                     </button>
                 </h2>
                 <div id="collapseConnection" class="accordion-collapse collapse show" aria-labelledby="headingConnection" data-bs-parent="#controlAccordion">
                     <div class="accordion-body">
-                        <form method="post" action="{{ url_for('index') }}" enctype="multipart/form-data" class="row g-3 align-items-end">
+                        <div class="row g-3 align-items-end">
                             <div class="col-12">
                                 <label for="terminal" class="form-label">Terminal</label>
                                 <input type="text" name="terminal" id="terminal" class="form-control" value="{{ terminal }}" placeholder="Ej. 192.168.1.10 o 192.168.1.10:4370" aria-describedby="terminalHelp">
                                 <div id="terminalHelp" class="form-text">Introduce la dirección del terminal. Puedes añadir el puerto con el formato IP:PUERTO.</div>
                             </div>
-                            <div class="col-12 col-md-6">
-                                <label for="employee-file" class="form-label">Archivo de empleados</label>
-                                <input type="file" name="employee_file" id="employee-file" class="form-control" accept=".json,.csv,.xlsx,.xlsm" aria-describedby="fileHelp">
-                                <div id="fileHelp" class="form-text">Selecciona un archivo JSON, CSV o Excel para cargar empleados en la aplicación.</div>
-                            </div>
-                            <div class="col-12 col-md-6">
-                                <div class="alert alert-info mb-3 mb-md-2" role="status">
-                                    Usa estas opciones para leer directamente del terminal o importar un archivo de empleados.
+                            <div class="col-12">
+                                <div class="alert alert-info mb-0" role="status">
+                                    Usa estas opciones para conectarte con el terminal. Las herramientas de importación y exportación se encuentran en la sección siguiente.
                                 </div>
                             </div>
                             <div class="col-12 d-flex flex-wrap gap-2">
                                 <button type="submit" name="action" value="fetch" class="btn btn-primary">Leer empleados</button>
-                                <button type="submit" name="action" value="import" class="btn btn-success">Importar</button>
-                                <button type="submit" name="action" value="clear" class="btn btn-outline-secondary" onclick="return confirm('Esto eliminará a todos los empleados almacenados en memoria para este terminal. ¿Continuar?');">Limpiar memoria</button>
+                                <button type="submit" name="action" value="clear" class="btn btn-outline-secondary" onclick="return confirm('Esto eliminará a todos los empleados almacenados en memoria para este terminal. ¿Continuar?');">Limpiar</button>
                             </div>
-                        </form>
+                        </div>
                     </div>
                 </div>
             </div>
             <div class="accordion-item">
                 <h2 class="accordion-header" id="headingActions">
                     <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#collapseActions" aria-expanded="false" aria-controls="collapseActions">
-                        Opciones de selección y exportación
+                        Exportación e Importación
                     </button>
                 </h2>
                 <div id="collapseActions" class="accordion-collapse collapse" aria-labelledby="headingActions" data-bs-parent="#controlAccordion">
                     <div class="accordion-body">
-                        <div class="row g-3 align-items-center">
-                            <div class="col-12 col-md-4">
-                                <div class="form-check">
-                                    <input class="form-check-input" type="checkbox" id="select-all" {% if not employees %}disabled{% endif %}>
-                                    <label class="form-check-label" for="select-all">Seleccionar todo (vista actual)</label>
-                                </div>
+                        <div class="row g-3 align-items-end">
+                            <div class="col-12 col-lg-6">
+                                <label for="employee-file" class="form-label">Archivo de empleados</label>
+                                <input type="file" name="employee_file" id="employee-file" class="form-control" accept=".json,.csv,.xlsx,.xlsm" aria-describedby="fileHelp">
+                                <div id="fileHelp" class="form-text">Selecciona un archivo JSON, CSV o Excel para cargar empleados en la aplicación.</div>
                             </div>
-                            <div class="col-12 col-md-8 d-flex flex-wrap gap-2 justify-content-md-end">
+                            <div class="col-12 col-lg-6 d-flex flex-wrap gap-2 justify-content-lg-end">
+                                <button type="submit" name="action" value="import" class="btn btn-success" {% if not terminal %}disabled{% endif %}>Importar</button>
+                            </div>
+                            <div class="col-12 d-flex flex-wrap gap-2 justify-content-md-end">
                                 <button type="submit" name="action" value="select" form="employees-form" class="btn btn-outline-primary" {% if not employees %}disabled{% endif %}>Guardar selección</button>
                                 <button type="submit" name="action" value="delete" form="employees-form" class="btn btn-danger" {% if not employees %}disabled{% endif %} onclick="return confirm('¿Eliminar empleados seleccionados del terminal?');">Eliminar seleccionados</button>
                                 <div class="btn-group">
@@ -442,7 +438,7 @@ INDEX_TEMPLATE = """
                     </div>
                 </div>
             </div>
-        </div>
+        </form>
 
         {% with messages = get_flashed_messages() %}
             {% if messages %}
@@ -518,7 +514,6 @@ INDEX_TEMPLATE = """
     <script>
         document.addEventListener('DOMContentLoaded', function () {
             const selectionInfo = document.getElementById('selection-info');
-            const selectAll = document.getElementById('select-all');
             const tableElement = document.getElementById('employees-table');
 
             if (!tableElement) {
@@ -532,7 +527,7 @@ INDEX_TEMPLATE = """
 
             const $table = $('#employees-table');
             const dataTable = $table.DataTable({
-                pageLength: 25,
+                pageLength: 50,
                 order: [[1, 'asc']],
                 autoWidth: false,
                 columnDefs: [
@@ -579,44 +574,10 @@ INDEX_TEMPLATE = """
                 });
             };
 
-            const updateSelectAllState = () => {
-                if (!selectAll) {
-                    return;
-                }
-                const visibleCheckboxes = $table.find('tbody tr:visible input[type="checkbox"]');
-                if (!visibleCheckboxes.length) {
-                    selectAll.checked = false;
-                    selectAll.indeterminate = false;
-                    return;
-                }
-                const checkedVisible = visibleCheckboxes.filter(':checked').length;
-                if (checkedVisible === 0) {
-                    selectAll.checked = false;
-                    selectAll.indeterminate = false;
-                } else if (checkedVisible === visibleCheckboxes.length) {
-                    selectAll.checked = true;
-                    selectAll.indeterminate = false;
-                } else {
-                    selectAll.checked = false;
-                    selectAll.indeterminate = true;
-                }
-            };
-
             let lastClicked = null;
-
-            if (selectAll) {
-                selectAll.addEventListener('change', function () {
-                    const visibleCheckboxes = $table.find('tbody tr:visible input[type="checkbox"]');
-                    visibleCheckboxes.prop('checked', selectAll.checked);
-                    updateRowClasses();
-                    updateSelectAllState();
-                    updateSelectionInfo();
-                });
-            }
 
             $table.on('change', 'tbody input[type="checkbox"]', function () {
                 updateRowClasses();
-                updateSelectAllState();
                 updateSelectionInfo();
             });
 
@@ -633,7 +594,6 @@ INDEX_TEMPLATE = """
                             checkboxList[i].checked = shouldCheck;
                         }
                         updateRowClasses();
-                        updateSelectAllState();
                         updateSelectionInfo();
                     }
                 }
@@ -642,11 +602,9 @@ INDEX_TEMPLATE = """
 
             $table.on('draw.dt', function () {
                 updateRowClasses();
-                updateSelectAllState();
             });
 
             updateRowClasses();
-            updateSelectAllState();
             updateSelectionInfo();
         });
     </script>
