@@ -6,7 +6,7 @@ import json
 import logging
 from datetime import datetime
 from io import BytesIO, StringIO
-from typing import Dict, List, Sequence, Set, Tuple
+from typing import Dict, List, Optional, Sequence, Set, Tuple
 
 from flask import (
     Flask,
@@ -197,6 +197,60 @@ def build_export_response(host: str, employees: List[dict], export_format: str):
     raise ValueError("Formato de exportación no soportado.")
 
 
+def _coerce_port(port_value: Optional[str]) -> int:
+    try:
+        port = int(port_value) if port_value is not None else DEFAULT_PORT
+    except (TypeError, ValueError):
+        return DEFAULT_PORT
+    if 1 <= port <= 65535:
+        return port
+    return DEFAULT_PORT
+
+
+def parse_terminal_value(value: Optional[str]) -> Tuple[Optional[str], int]:
+    """Convierte el texto introducido por el usuario en IP y puerto."""
+
+    if not value:
+        return None, DEFAULT_PORT
+
+    cleaned = value.strip()
+    if not cleaned:
+        return None, DEFAULT_PORT
+
+    host = cleaned
+    port = DEFAULT_PORT
+
+    if cleaned.startswith("[") and "]" in cleaned:
+        closing = cleaned.find("]")
+        host = cleaned[1:closing].strip()
+        remainder = cleaned[closing + 1 :].strip()
+        if remainder.startswith(":"):
+            port = _coerce_port(remainder[1:].strip())
+    else:
+        parts = cleaned.rsplit(":", 1)
+        if len(parts) == 2 and parts[0]:
+            potential_host, potential_port = parts
+            if potential_port:
+                host = potential_host.strip() or cleaned
+                port = _coerce_port(potential_port.strip())
+        elif cleaned.count(":") > 1:
+            host = cleaned  # Dirección IPv6 sin puerto
+
+    host = host.strip()
+    if not host:
+        host = None
+
+    return host, port
+
+
+def format_terminal_value(host: Optional[str], port: int) -> str:
+    if not host:
+        return ""
+    if port == DEFAULT_PORT:
+        return host
+    return f"{host}:{port}"
+
+
 def _normalize_employee_record(raw: dict) -> dict:
     """Normaliza los datos de un empleado importado."""
 
@@ -298,125 +352,148 @@ INDEX_TEMPLATE = """
     <meta charset=\"utf-8\">
     <title>Empleados del terminal</title>
     <style>
-        body { font-family: Arial, sans-serif; margin: 2rem; }
-        form { margin-bottom: 2rem; }
-        table { border-collapse: collapse; width: 100%; }
+        body { font-family: Arial, sans-serif; margin: 0; background-color: #f8f9fa; color: #333; }
+        main { padding: 1rem 2rem 2rem; }
+        h1 { margin: 0; font-size: 1.6rem; }
+        table { border-collapse: collapse; width: 100%; background-color: #fff; }
         th, td { border: 1px solid #ccc; padding: 0.5rem; text-align: left; }
         th { background-color: #f2f2f2; }
-        .actions { margin-top: 1rem; }
+        .app-header { position: sticky; top: 0; z-index: 100; background-color: #fff; padding: 1rem 2rem; box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1); display: flex; flex-direction: column; gap: 0.75rem; }
+        .header-main { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 0.5rem; }
+        .header-form, .header-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 0.75rem; }
+        .header-form label, .header-toolbar label { display: flex; flex-direction: column; gap: 0.25rem; font-size: 0.9rem; }
+        .checkbox-label { flex-direction: row; align-items: center; }
+        .header-form input[type=\"text\"], .header-toolbar input[type=\"search\"] { padding: 0.35rem 0.5rem; border: 1px solid #bbb; border-radius: 4px; min-width: 14rem; }
+        .header-form input[type=\"file\"] { max-width: 18rem; }
+        .header-toolbar input[type=\"search\"] { min-width: 16rem; }
+        .button-group { display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: center; }
+        button { background-color: #1976d2; color: #fff; border: none; padding: 0.45rem 0.9rem; border-radius: 4px; cursor: pointer; font-size: 0.9rem; transition: background-color 0.2s ease-in-out; }
+        button:hover { background-color: #125ea5; }
+        button:disabled { opacity: 0.6; cursor: not-allowed; }
+        .action-delete { background-color: #c62828; }
+        .action-delete:hover { background-color: #a61d1d; }
+        .action-clear { background-color: #6d4c41; }
+        .action-clear:hover { background-color: #5d4037; }
+        .action-export { background-color: #00897b; }
+        .action-export:hover { background-color: #00695c; }
+        .messages { color: #c0392b; margin: 1rem 0; }
+        .messages li { margin-bottom: 0.25rem; }
+        .employees-form { margin-top: 1.5rem; }
         .selected { background-color: #e6f7ff; }
         .biometric-list { margin: 0; padding-left: 1rem; }
-        .messages { color: #c0392b; }
-        .table-controls { display: flex; align-items: center; gap: 1rem; margin-bottom: 0.75rem; }
         .hidden { display: none; }
+        #selection-info { font-weight: 600; color: #1976d2; }
+        @media (max-width: 768px) {
+            .header-form input[type=\"text\"], .header-toolbar input[type=\"search\"] { min-width: 0; width: 100%; }
+            .header-form, .header-toolbar { flex-direction: column; align-items: stretch; }
+            .button-group { justify-content: flex-start; }
+            main { padding: 1rem; }
+            .app-header { padding: 1rem; }
+        }
     </style>
 </head>
 <body>
-    <h1>Consulta de empleados</h1>
-    {% with messages = get_flashed_messages() %}
-        {% if messages %}
-            <ul class=\"messages\">
-                {% for message in messages %}
-                <li>{{ message }}</li>
-                {% endfor %}
-            </ul>
-        {% endif %}
-    {% endwith %}
-
-    <form method=\"post\" action=\"{{ url_for('index') }}\" enctype=\"multipart/form-data\" class=\"table-controls\">
-        <input type=\"hidden\" name=\"action\" value=\"import\">
-        <label for=\"import-ip\">Terminal:</label>
-        <input type=\"text\" name=\"ip\" id=\"import-ip\" value=\"{{ ip or '' }}\" required>
-        <label for=\"employee-file\">Importar empleados:</label>
-        <input type=\"file\" name=\"employee_file\" id=\"employee-file\" accept=\".json,.csv,.xlsx,.xlsm\" required>
-        <button type=\"submit\">Importar</button>
-    </form>
-
-    <form method=\"post\" action=\"{{ url_for('index') }}\">
-        <input type=\"hidden\" name=\"action\" value=\"fetch\">
-        <label for=\"ip\">Dirección IP del terminal:</label>
-        <input type=\"text\" name=\"ip\" id=\"ip\" value=\"{{ ip or '' }}\" required>
-        <label for=\"port\">Puerto:</label>
-        <input type=\"number\" name=\"port\" id=\"port\" value=\"{{ port }}\" min=1 max=65535>
-        <button type=\"submit\">Leer empleados</button>
-    </form>
-
-    {% if employees %}
-    <form method=\"post\" action=\"{{ url_for('index') }}\">
-        <input type=\"hidden\" name=\"ip\" value=\"{{ ip }}\">
-        <input type=\"hidden\" name=\"port\" value=\"{{ port }}\">
-        <div class=\"table-controls\">
-            <label>
-                <input type=\"checkbox\" id=\"select-all\">
+    <header class=\"app-header\">
+        <div class=\"header-main\">
+            <h1>Consulta de empleados</h1>
+            <span id=\"selection-info\" data-total=\"{{ total_employees }}\" data-selected=\"{{ selected_count }}\" title=\"Resumen de la selección actual.\">Seleccionados: {{ selected_count }} de {{ total_employees }}</span>
+        </div>
+        <form method=\"post\" action=\"{{ url_for('index') }}\" enctype=\"multipart/form-data\" class=\"header-form\">
+            <label for=\"terminal\" title=\"Introduce la dirección del terminal. Puedes añadir el puerto con el formato IP:PUERTO.\">
+                Terminal
+                <input type=\"text\" name=\"terminal\" id=\"terminal\" value=\"{{ terminal }}\" placeholder=\"Ej. 192.168.1.10 o 192.168.1.10:4370\">
+            </label>
+            <label for=\"employee-file\" title=\"Selecciona un archivo JSON, CSV o Excel para cargar empleados en la aplicación.\">
+                Archivo de empleados
+                <input type=\"file\" name=\"employee_file\" id=\"employee-file\" accept=\".json,.csv,.xlsx,.xlsm\">
+            </label>
+            <div class=\"button-group\">
+                <button type=\"submit\" name=\"action\" value=\"fetch\" title=\"Consulta el terminal indicado y muestra sus empleados.\">Leer empleados</button>
+                <button type=\"submit\" name=\"action\" value=\"import\" title=\"Importa empleados desde el archivo seleccionado y los guarda en memoria.\">Importar</button>
+                <button type=\"submit\" name=\"action\" value=\"clear\" class=\"action-clear\" title=\"Limpia los empleados almacenados en memoria. Si hay un terminal especificado, solo afecta a ese equipo.\" onclick=\"return confirm('Esto eliminará a todos los empleados almacenados en memoria para este terminal. ¿Continuar?');\">Limpiar memoria</button>
+            </div>
+        </form>
+        <div class=\"header-toolbar\">
+            <label for=\"select-all\" class=\"checkbox-label\" title=\"Activa o desactiva la selección de todos los empleados visibles.\">
+                <input type=\"checkbox\" id=\"select-all\" {% if not employees %}disabled{% endif %}>
                 Seleccionar todo
             </label>
-            <label for=\"filter\">Filtrar:</label>
-            <input type=\"search\" id=\"filter\" placeholder=\"Escribe para filtrar por UID, nombre, tarjeta...\">
+            <label for=\"filter\" title=\"Filtra la tabla escribiendo parte del UID, nombre, usuario o tarjeta.\">
+                Filtro
+                <input type=\"search\" id=\"filter\" placeholder=\"Escribe para filtrar por UID, nombre, tarjeta...\" {% if not employees %}disabled{% endif %}>
+            </label>
+            <div class=\"button-group\">
+                <button type=\"submit\" name=\"action\" value=\"select\" form=\"employees-form\" title=\"Guarda la selección actual de empleados.\" {% if not employees %}disabled{% endif %}>Guardar selección</button>
+                <button type=\"submit\" name=\"action\" value=\"delete\" form=\"employees-form\" class=\"action-delete\" title=\"Elimina del terminal a los empleados seleccionados.\" {% if not employees %}disabled{% endif %} onclick=\"return confirm('¿Eliminar empleados seleccionados del terminal?');\">Eliminar seleccionados</button>
+                <button type=\"submit\" name=\"action\" value=\"export_csv\" form=\"employees-form\" class=\"action-export\" title=\"Descarga la selección como archivo CSV.\" {% if not employees %}disabled{% endif %}>Exportar CSV</button>
+                <button type=\"submit\" name=\"action\" value=\"export_json\" form=\"employees-form\" class=\"action-export\" title=\"Descarga la selección como archivo JSON.\" {% if not employees %}disabled{% endif %}>Exportar JSON</button>
+                <button type=\"submit\" name=\"action\" value=\"export_excel\" form=\"employees-form\" class=\"action-export\" title=\"Descarga la selección como archivo de Excel.\" {% if not employees %}disabled{% endif %}>Exportar Excel</button>
+            </div>
         </div>
-        <table id=\"employees-table\">
-            <thead>
-                <tr>
-                    <th>Seleccionar</th>
-                    <th>UID</th>
-                    <th>Nombre</th>
-                    <th>User ID</th>
-                    <th>Tarjeta</th>
-                    <th>Privilegio</th>
-                    <th>Grupo</th>
-                    <th>Biometría</th>
-                </tr>
-            </thead>
-            <tbody>
-                {% for employee in employees %}
-                <tr class=\"{% if employee.uid in selected %}selected{% endif %}\" data-search=\"{{ (
-                    (employee.uid or '') ~ ' ' ~
-                    (employee.name or '') ~ ' ' ~
-                    (employee.user_id or '') ~ ' ' ~
-                    (employee.card or '')
-                )|lower }}\">
-                    <td>
-                        <input type=\"checkbox\" name=\"selected\" value=\"{{ employee.uid }}\" {% if employee.uid in selected %}checked{% endif %}>
-                    </td>
-                    <td>{{ employee.uid }}</td>
-                    <td>{{ employee.name }}</td>
-                    <td>{{ employee.user_id }}</td>
-                    <td>{{ employee.card }}</td>
-                    <td>{{ employee.privilege }}</td>
-                    <td>{{ employee.group_id }}</td>
-                    <td>
-                        {% if employee.biometrics %}
-                        <ul class=\"biometric-list\">
-                            {% for bio in employee.biometrics %}
-                            <li>FID {{ bio.fid }}, Tipo {{ bio.type }}, Tamaño {{ bio.size or 'N/D' }}, Válido {{ bio.valid }}</li>
-                            {% endfor %}
-                        </ul>
-                        {% else %}
-                        Sin datos
-                        {% endif %}
-                    </td>
-                </tr>
-                {% endfor %}
-            </tbody>
-        </table>
-        <div class=\"actions\">
-            <button type=\"submit\" name=\"action\" value=\"select\">Guardar selección</button>
-            <button type=\"submit\" name=\"action\" value=\"delete\" onclick=\"return confirm('¿Eliminar empleados seleccionados del terminal?');\">Eliminar seleccionados</button>
-            <button type=\"submit\" name=\"action\" value=\"clear\" onclick=\"return confirm('Esto eliminará a todos los empleados almacenados en memoria para este terminal. ¿Continuar?');\">Limpiar</button>
-        </div>
-        <div class=\"actions\">
-            <span>Exportar selección:</span>
-            <button type=\"submit\" name=\"action\" value=\"export_csv\">CSV</button>
-            <button type=\"submit\" name=\"action\" value=\"export_json\">JSON</button>
-            <button type=\"submit\" name=\"action\" value=\"export_excel\">Excel</button>
-        </div>
-        <div class=\"actions\">
-            <span id=\"selection-info\" data-total=\"{{ total_employees }}\" data-selected=\"{{ selected_count }}\">Seleccionados: {{ selected_count }} de {{ total_employees }}</span>
-        </div>
-    </form>
-    {% elif ip %}
-        <p>No se encontraron empleados para el terminal {{ ip }}.</p>
-    {% endif %}
-
+    </header>
+    <main>
+        {% with messages = get_flashed_messages() %}
+            {% if messages %}
+                <ul class=\"messages\">
+                    {% for message in messages %}
+                    <li>{{ message }}</li>
+                    {% endfor %}
+                </ul>
+            {% endif %}
+        {% endwith %}
+        {% if employees %}
+        <form method=\"post\" action=\"{{ url_for('index') }}\" id=\"employees-form\" class=\"employees-form\">
+            <input type=\"hidden\" name=\"terminal\" value=\"{{ terminal }}\">
+            <table id=\"employees-table\">
+                <thead>
+                    <tr>
+                        <th>Seleccionar</th>
+                        <th>UID</th>
+                        <th>Nombre</th>
+                        <th>User ID</th>
+                        <th>Tarjeta</th>
+                        <th>Privilegio</th>
+                        <th>Grupo</th>
+                        <th>Biometría</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for employee in employees %}
+                    <tr class=\"{% if employee.uid in selected %}selected{% endif %}\" data-search=\"{{ (
+                        (employee.uid or '') ~ ' ' ~
+                        (employee.name or '') ~ ' ' ~
+                        (employee.user_id or '') ~ ' ' ~
+                        (employee.card or '')
+                    )|lower }}\">
+                        <td>
+                            <input type=\"checkbox\" name=\"selected\" value=\"{{ employee.uid }}\" {% if employee.uid in selected %}checked{% endif %}>
+                        </td>
+                        <td>{{ employee.uid }}</td>
+                        <td>{{ employee.name }}</td>
+                        <td>{{ employee.user_id }}</td>
+                        <td>{{ employee.card }}</td>
+                        <td>{{ employee.privilege }}</td>
+                        <td>{{ employee.group_id }}</td>
+                        <td>
+                            {% if employee.biometrics %}
+                            <ul class=\"biometric-list\">
+                                {% for bio in employee.biometrics %}
+                                <li>FID {{ bio.fid }}, Tipo {{ bio.type }}, Tamaño {{ bio.size or 'N/D' }}, Válido {{ bio.valid }}</li>
+                                {% endfor %}
+                            </ul>
+                            {% else %}
+                            Sin datos
+                            {% endif %}
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </form>
+        {% elif terminal %}
+            <p>No se encontraron empleados para el terminal {{ terminal }}.</p>
+        {% endif %}
+    </main>
     <script>
         document.addEventListener('DOMContentLoaded', function () {
             const selectAll = document.getElementById('select-all');
@@ -524,15 +601,23 @@ INDEX_TEMPLATE = """
 
 @app.route("/", methods=["GET", "POST"])
 def index():
-    ip = request.values.get("ip", "").strip() or None
-    port_value = request.values.get("port", str(DEFAULT_PORT))
-    try:
-        port = int(port_value)
-    except (TypeError, ValueError):
-        port = DEFAULT_PORT
+    terminal_value = request.values.get("terminal")
+    parsed_ip, parsed_port = parse_terminal_value(terminal_value)
+    fallback_ip = (request.values.get("ip", "") or "").strip() or None
+    ip = parsed_ip or fallback_ip
+    port = parsed_port if parsed_ip else _coerce_port(request.values.get("port"))
 
     employees = []
     selected = set()
+
+    def redirect_with_terminal():
+        terminal_param = format_terminal_value(ip, port)
+        if terminal_param:
+            return redirect(url_for("index", terminal=terminal_param))
+        fallback_terminal = (terminal_value or "").strip()
+        if fallback_terminal:
+            return redirect(url_for("index", terminal=fallback_terminal))
+        return redirect(url_for("index"))
 
     if request.method == "POST":
         action = request.form.get("action")
@@ -547,10 +632,10 @@ def index():
                 flash(
                     f"Se importaron {len(imported_employees)} empleado(s) en memoria para el terminal {ip}."
                 )
-            return redirect(url_for("index", ip=ip, port=port))
+            return redirect_with_terminal()
         elif action == "import":
             flash("Debes indicar un terminal para importar empleados.")
-            return redirect(url_for("index"))
+            return redirect_with_terminal()
         elif action == "fetch" and ip:
             try:
                 employees = fetch_employees(ip, port)
@@ -560,16 +645,16 @@ def index():
             else:
                 _TERMINAL_EMPLOYEES[ip] = employees
                 selected = _SELECTED_EMPLOYEES.setdefault(ip, set())
-            return redirect(url_for("index", ip=ip, port=port))
+            return redirect_with_terminal()
         elif action == "select" and ip:
             selected_uids = set(request.form.getlist("selected"))
             _SELECTED_EMPLOYEES[ip] = selected_uids
-            return redirect(url_for("index", ip=ip, port=port))
+            return redirect_with_terminal()
         elif action == "delete" and ip:
             selected_uids = set(request.form.getlist("selected"))
             if not selected_uids:
                 flash("Selecciona al menos un empleado para eliminar.")
-                return redirect(url_for("index", ip=ip, port=port))
+                return redirect_with_terminal()
 
             cached_employees = _TERMINAL_EMPLOYEES.get(ip, [])
             to_delete = [emp for emp in cached_employees if emp.get("uid") in selected_uids]
@@ -578,7 +663,7 @@ def index():
                 flash(
                     "Los empleados seleccionados no están disponibles en caché. Consulta nuevamente el terminal."
                 )
-                return redirect(url_for("index", ip=ip, port=port))
+                return redirect_with_terminal()
 
             try:
                 deleted, errors = delete_employees(ip, to_delete, port=port)
@@ -597,19 +682,19 @@ def index():
                 if errors:
                     for uid, message in errors:
                         flash(f"No se pudo eliminar el empleado {uid}: {message}")
-            return redirect(url_for("index", ip=ip, port=port))
+            return redirect_with_terminal()
         elif action in {"export_csv", "export_json", "export_excel"} and ip:
             selected_uids = set(request.form.getlist("selected"))
             if not selected_uids:
                 flash("Selecciona al menos un empleado para exportar.")
-                return redirect(url_for("index", ip=ip, port=port))
+                return redirect_with_terminal()
 
             cached_employees = _TERMINAL_EMPLOYEES.get(ip, [])
             if not cached_employees:
                 flash(
                     "No hay empleados en caché para exportar. Consulta primero el terminal."
                 )
-                return redirect(url_for("index", ip=ip, port=port))
+                return redirect_with_terminal()
 
             selected_employees = [
                 emp for emp in cached_employees if emp.get("uid") in selected_uids
@@ -618,7 +703,7 @@ def index():
                 flash(
                     "Los empleados seleccionados no están disponibles en caché. Consulta nuevamente el terminal."
                 )
-                return redirect(url_for("index", ip=ip, port=port))
+                return redirect_with_terminal()
 
             _SELECTED_EMPLOYEES[ip] = selected_uids
             export_format = action.split("_", 1)[1]
@@ -626,7 +711,7 @@ def index():
                 return build_export_response(ip, selected_employees, export_format)
             except ValueError as exc:
                 flash(str(exc))
-                return redirect(url_for("index", ip=ip, port=port))
+                return redirect_with_terminal()
         elif action == "clear":
             if ip:
                 cached = _TERMINAL_EMPLOYEES.pop(ip, [])
@@ -638,7 +723,7 @@ def index():
                     )
                 else:
                     flash("No había empleados almacenados en memoria para este terminal.")
-                return redirect(url_for("index", ip=ip, port=port))
+                return redirect_with_terminal()
             _TERMINAL_EMPLOYEES.clear()
             _SELECTED_EMPLOYEES.clear()
             flash("Se limpiaron los empleados almacenados en memoria.")
@@ -655,10 +740,14 @@ def index():
         _SELECTED_EMPLOYEES[ip] = selected
     total_employees = len(employees)
     selected_count = len(selected)
+    terminal_display = format_terminal_value(ip, port)
+    if not terminal_display and terminal_value:
+        terminal_display = terminal_value.strip()
     return render_template_string(
         INDEX_TEMPLATE,
         ip=ip,
         port=port,
+        terminal=terminal_display,
         employees=employees,
         selected=selected,
         employee_map=employee_map,
