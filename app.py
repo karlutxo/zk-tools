@@ -18,7 +18,7 @@ from flask import (
     send_file,
     url_for,
 )
-from openpyxl import Workbook
+from openpyxl import Workbook, load_workbook
 
 from zk_tools import DEFAULT_PORT, connect_with_retries
 
@@ -197,6 +197,100 @@ def build_export_response(host: str, employees: List[dict], export_format: str):
     raise ValueError("Formato de exportación no soportado.")
 
 
+def _normalize_employee_record(raw: dict) -> dict:
+    """Normaliza los datos de un empleado importado."""
+
+    def _safe_get(key: str):
+        for candidate in (key, key.lower(), key.upper()):
+            if candidate in raw:
+                return raw.get(candidate)
+        return raw.get(key)
+
+    biometrics_value = _safe_get("biometrics")
+    biometrics: List[dict]
+    if isinstance(biometrics_value, list):
+        biometrics = [item for item in biometrics_value if isinstance(item, dict)]
+    elif isinstance(biometrics_value, str):
+        biometrics_value = biometrics_value.strip()
+        if biometrics_value:
+            try:
+                parsed = json.loads(biometrics_value)
+            except json.JSONDecodeError:
+                biometrics = []
+            else:
+                biometrics = (
+                    [item for item in parsed if isinstance(item, dict)]
+                    if isinstance(parsed, list)
+                    else []
+                )
+        else:
+            biometrics = []
+    else:
+        biometrics = []
+
+    return {
+        "uid": str(_safe_get("uid") or ""),
+        "name": _safe_get("name") or "",
+        "user_id": _safe_get("user_id") or "",
+        "card": _safe_get("card") or "",
+        "privilege": _safe_get("privilege") or "",
+        "group_id": _safe_get("group_id") or "",
+        "biometrics": biometrics,
+    }
+
+
+def parse_employee_file(file_storage) -> List[dict]:
+    """Convierte un archivo cargado en una lista de empleados."""
+
+    if file_storage is None:
+        raise ValueError("Selecciona un archivo para importar.")
+
+    filename = (file_storage.filename or "").strip()
+    if not filename:
+        raise ValueError("Selecciona un archivo para importar.")
+
+    payload = file_storage.read()
+    if not payload:
+        raise ValueError("El archivo de empleados está vacío.")
+
+    ext = filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
+
+    if ext == "json":
+        try:
+            data = json.loads(payload.decode("utf-8-sig"))
+        except json.JSONDecodeError as exc:
+            raise ValueError(f"El archivo JSON es inválido: {exc}") from exc
+        if not isinstance(data, list):
+            raise ValueError("El archivo JSON debe contener una lista de empleados.")
+        return [_normalize_employee_record(item) for item in data if isinstance(item, dict)]
+
+    if ext == "csv":
+        text = payload.decode("utf-8-sig")
+        reader = csv.DictReader(StringIO(text))
+        return [_normalize_employee_record({k.lower(): v for k, v in row.items()}) for row in reader]
+
+    if ext in {"xlsx", "xlsm"}:
+        workbook = load_workbook(BytesIO(payload), data_only=True)
+        worksheet = workbook.active
+        rows = list(worksheet.iter_rows(values_only=True))
+        if not rows:
+            return []
+        headers = [str(cell).strip().lower() if cell is not None else "" for cell in rows[0]]
+        employees: List[dict] = []
+        for row in rows[1:]:
+            if row is None:
+                continue
+            row_dict = {
+                headers[index]: value
+                for index, value in enumerate(row)
+                if index < len(headers) and headers[index]
+            }
+            employees.append(_normalize_employee_record(row_dict))
+        return employees
+
+    raise ValueError("Formato de archivo no soportado. Usa JSON, CSV o Excel.")
+
+
 INDEX_TEMPLATE = """
 <!doctype html>
 <html lang=\"es\">
@@ -229,13 +323,22 @@ INDEX_TEMPLATE = """
         {% endif %}
     {% endwith %}
 
+    <form method=\"post\" action=\"{{ url_for('index') }}\" enctype=\"multipart/form-data\" class=\"table-controls\">
+        <input type=\"hidden\" name=\"action\" value=\"import\">
+        <label for=\"import-ip\">Terminal:</label>
+        <input type=\"text\" name=\"ip\" id=\"import-ip\" value=\"{{ ip or '' }}\" required>
+        <label for=\"employee-file\">Importar empleados:</label>
+        <input type=\"file\" name=\"employee_file\" id=\"employee-file\" accept=\".json,.csv,.xlsx,.xlsm\" required>
+        <button type=\"submit\">Importar</button>
+    </form>
+
     <form method=\"post\" action=\"{{ url_for('index') }}\">
         <input type=\"hidden\" name=\"action\" value=\"fetch\">
         <label for=\"ip\">Dirección IP del terminal:</label>
         <input type=\"text\" name=\"ip\" id=\"ip\" value=\"{{ ip or '' }}\" required>
         <label for=\"port\">Puerto:</label>
         <input type=\"number\" name=\"port\" id=\"port\" value=\"{{ port }}\" min=1 max=65535>
-        <button type=\"submit\">Consultar empleados</button>
+        <button type=\"submit\">Leer empleados</button>
     </form>
 
     {% if employees %}
@@ -298,12 +401,16 @@ INDEX_TEMPLATE = """
         <div class=\"actions\">
             <button type=\"submit\" name=\"action\" value=\"select\">Guardar selección</button>
             <button type=\"submit\" name=\"action\" value=\"delete\" onclick=\"return confirm('¿Eliminar empleados seleccionados del terminal?');\">Eliminar seleccionados</button>
+            <button type=\"submit\" name=\"action\" value=\"clear\" onclick=\"return confirm('Esto eliminará a todos los empleados almacenados en memoria para este terminal. ¿Continuar?');\">Limpiar</button>
         </div>
         <div class=\"actions\">
             <span>Exportar selección:</span>
             <button type=\"submit\" name=\"action\" value=\"export_csv\">CSV</button>
             <button type=\"submit\" name=\"action\" value=\"export_json\">JSON</button>
             <button type=\"submit\" name=\"action\" value=\"export_excel\">Excel</button>
+        </div>
+        <div class=\"actions\">
+            <span id=\"selection-info\" data-total=\"{{ total_employees }}\" data-selected=\"{{ selected_count }}\">Seleccionados: {{ selected_count }} de {{ total_employees }}</span>
         </div>
     </form>
     {% elif ip %}
@@ -322,6 +429,8 @@ INDEX_TEMPLATE = """
             const checkboxes = Array.from(table.querySelectorAll('tbody input[type="checkbox"]'));
             const rows = Array.from(table.querySelectorAll('tbody tr'));
             let lastClicked = null;
+            const selectionInfo = document.getElementById('selection-info');
+            const totalEmployees = selectionInfo ? parseInt(selectionInfo.dataset.total || '0', 10) : checkboxes.length;
 
             const updateSelectAllState = () => {
                 if (!selectAll) {
@@ -334,6 +443,15 @@ INDEX_TEMPLATE = """
                 selectAll.checked = checkboxes.every(item => item.checked);
             };
 
+            const updateSelectionInfo = () => {
+                if (!selectionInfo) {
+                    return;
+                }
+                const selectedCount = checkboxes.filter(cb => cb.checked).length;
+                selectionInfo.dataset.selected = String(selectedCount);
+                selectionInfo.textContent = `Seleccionados: ${selectedCount} de ${totalEmployees}`;
+            };
+
             const updateRowClasses = () => {
                 rows.forEach((row, index) => {
                     const checkbox = checkboxes[index];
@@ -342,6 +460,7 @@ INDEX_TEMPLATE = """
                     }
                     row.classList.toggle('selected', checkbox.checked);
                 });
+                updateSelectionInfo();
             };
 
             if (selectAll) {
@@ -381,6 +500,7 @@ INDEX_TEMPLATE = """
 
             updateRowClasses();
             updateSelectAllState();
+            updateSelectionInfo();
 
             if (filterInput) {
                 filterInput.addEventListener('input', function () {
@@ -416,7 +536,22 @@ def index():
 
     if request.method == "POST":
         action = request.form.get("action")
-        if action == "fetch" and ip:
+        if action == "import" and ip:
+            try:
+                imported_employees = parse_employee_file(request.files.get("employee_file"))
+            except ValueError as exc:
+                flash(str(exc))
+            else:
+                _TERMINAL_EMPLOYEES[ip] = imported_employees
+                _SELECTED_EMPLOYEES[ip] = set()
+                flash(
+                    f"Se importaron {len(imported_employees)} empleado(s) en memoria para el terminal {ip}."
+                )
+            return redirect(url_for("index", ip=ip, port=port))
+        elif action == "import":
+            flash("Debes indicar un terminal para importar empleados.")
+            return redirect(url_for("index"))
+        elif action == "fetch" and ip:
             try:
                 employees = fetch_employees(ip, port)
             except Exception as exc:  # pragma: no cover - dependiente del dispositivo
@@ -492,12 +627,34 @@ def index():
             except ValueError as exc:
                 flash(str(exc))
                 return redirect(url_for("index", ip=ip, port=port))
+        elif action == "clear":
+            if ip:
+                cached = _TERMINAL_EMPLOYEES.pop(ip, [])
+                removed_count = len(cached)
+                _SELECTED_EMPLOYEES.pop(ip, None)
+                if removed_count:
+                    flash(
+                        f"Se limpiaron {removed_count} empleado(s) en memoria para el terminal {ip}."
+                    )
+                else:
+                    flash("No había empleados almacenados en memoria para este terminal.")
+                return redirect(url_for("index", ip=ip, port=port))
+            _TERMINAL_EMPLOYEES.clear()
+            _SELECTED_EMPLOYEES.clear()
+            flash("Se limpiaron los empleados almacenados en memoria.")
+            return redirect(url_for("index"))
 
     if ip and ip in _TERMINAL_EMPLOYEES:
         employees = _TERMINAL_EMPLOYEES[ip]
         selected = _SELECTED_EMPLOYEES.get(ip, set())
-
+    
     employee_map = {emp["uid"]: emp for emp in employees}
+    employee_uids = set(employee_map.keys())
+    selected = {uid for uid in selected if uid in employee_uids}
+    if ip:
+        _SELECTED_EMPLOYEES[ip] = selected
+    total_employees = len(employees)
+    selected_count = len(selected)
     return render_template_string(
         INDEX_TEMPLATE,
         ip=ip,
@@ -505,6 +662,8 @@ def index():
         employees=employees,
         selected=selected,
         employee_map=employee_map,
+        total_employees=total_employees,
+        selected_count=selected_count,
     )
 
 
