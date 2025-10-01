@@ -397,6 +397,7 @@ INDEX_TEMPLATE = """
                             <div class="col-12 d-flex flex-wrap gap-2">
                                 <button type="submit" name="action" value="fetch" class="btn btn-primary">Leer empleados</button>
                                 <button type="submit" name="action" value="clear" class="btn btn-outline-secondary" onclick="return confirm('Esto eliminará a todos los empleados almacenados en memoria para este terminal. ¿Continuar?');">Limpiar</button>
+                                <button type="submit" name="action" value="delete" form="employees-form" class="btn btn-danger" {% if not employees %}disabled{% endif %} onclick="return confirm('¿Eliminar empleados seleccionados del terminal?');">Eliminar seleccionados</button>
                             </div>
                         </div>
                     </div>
@@ -421,7 +422,6 @@ INDEX_TEMPLATE = """
                             </div>
                             <div class="col-12 d-flex flex-wrap gap-2 justify-content-md-end">
                                 <button type="submit" name="action" value="select" form="employees-form" class="btn btn-outline-primary" {% if not employees %}disabled{% endif %}>Guardar selección</button>
-                                <button type="submit" name="action" value="delete" form="employees-form" class="btn btn-danger" {% if not employees %}disabled{% endif %} onclick="return confirm('¿Eliminar empleados seleccionados del terminal?');">Eliminar seleccionados</button>
                                 <div class="btn-group">
                                     <button type="button" class="btn btn-success dropdown-toggle" data-bs-toggle="dropdown" aria-expanded="false" {% if not employees %}disabled{% endif %}>
                                         Exportar selección
