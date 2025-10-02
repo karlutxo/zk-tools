@@ -6,17 +6,20 @@ import json
 import logging
 from datetime import datetime
 from io import BytesIO, StringIO
+from pathlib import Path
 from typing import Dict, Iterable, List, Optional, Sequence, Set, Tuple
 
 from flask import make_response, send_file
 from openpyxl import Workbook, load_workbook
 
+from zk import const
 from zk_tools import DEFAULT_PORT, connect_with_retries
 
 logger = logging.getLogger(__name__)
 
 TERMINAL_EMPLOYEES: Dict[str, List[dict]] = {}
 SELECTED_EMPLOYEES: Dict[str, Set[str]] = {}
+TERMINAL_LIST_PATH = Path(__file__).resolve().parent.parent / "terminales.txt"
 
 EXPORT_COLUMNS: Sequence[Tuple[str, str]] = (
     ("uid", "UID"),
@@ -122,6 +125,253 @@ def delete_employees(
             logger.exception("Error al desconectar del terminal %s", host)
 
     return deleted, errors
+
+
+def get_terminal_status(host: str, port: int = DEFAULT_PORT) -> Tuple[dict, List[str]]:
+    """Recopila información general del terminal para mostrar al usuario."""
+
+    zk = conn = None
+    info: Dict[str, Optional[str]] = {
+        "Dirección IP": host,
+        "Puerto": str(port),
+    }
+    errors: List[str] = []
+
+    def safe_call(attr: str, label: str) -> Optional[str]:
+        if not hasattr(conn, attr):
+            errors.append(f"El terminal no soporta la consulta '{label}'.")
+            return None
+        try:
+            value = getattr(conn, attr)()
+        except Exception as exc:  # pragma: no cover - dependiente del dispositivo
+            errors.append(f"Error al obtener {label}: {exc}")
+            return None
+        if value is None:
+            return None
+        return str(value)
+
+    try:
+        zk, conn = connect_with_retries(host, port)
+        if conn is None:
+            raise ValueError("No se pudo establecer conexión con el terminal.")
+
+        info["Número de serie"] = safe_call("get_serialnumber", "el número de serie")
+        info["Nombre del dispositivo"] = safe_call("get_device_name", "el nombre del dispositivo")
+        info["Modelo"] = safe_call("get_model", "el modelo")
+        info["Plataforma"] = safe_call("get_platform", "la plataforma")
+        info["Versión de firmware"] = safe_call("get_firmware_version", "la versión de firmware")
+        info["Dirección MAC"] = safe_call("get_mac", "la dirección MAC")
+        info["Fecha y hora"] = safe_call("get_time", "la fecha y hora")
+
+        users: List = []
+        try:
+            users = conn.get_users() or []
+        except Exception as exc:  # pragma: no cover - dependiente del dispositivo
+            errors.append(f"No se pudo obtener la lista de usuarios: {exc}")
+        else:
+            info["Usuarios en memoria"] = str(len(users))
+
+        attendance_count: Optional[int] = None
+        if hasattr(conn, "get_attendance_count"):
+            try:
+                attendance_count = conn.get_attendance_count()
+            except Exception as exc:  # pragma: no cover - dependiente del dispositivo
+                errors.append(f"No se pudo obtener el número de marcajes: {exc}")
+        elif hasattr(conn, "get_attendance"):
+            try:
+                attendances = conn.get_attendance() or []
+            except Exception as exc:  # pragma: no cover - dependiente del dispositivo
+                errors.append(f"No se pudo obtener los marcajes: {exc}")
+            else:
+                attendance_count = len(attendances)
+
+        if attendance_count is not None:
+            info["Marcajes en memoria"] = str(attendance_count)
+
+        if hasattr(conn, "get_work_code"):
+            try:
+                workcodes = conn.get_work_code() or []
+            except Exception as exc:  # pragma: no cover - dependiente del dispositivo
+                errors.append(f"No se pudo obtener los códigos de trabajo: {exc}")
+            else:
+                info["Códigos de trabajo"] = str(len(workcodes))
+
+    finally:
+        try:
+            if conn:
+                conn.disconnect()
+        except Exception:  # pragma: no cover - errores de red
+            logger.exception("Error al desconectar del terminal %s", host)
+
+    cleaned_info = {k: v for k, v in info.items() if v}
+    return cleaned_info, errors
+
+
+def load_known_terminals() -> List[Dict[str, str]]:
+    """Devuelve la lista de terminales conocidos desde el fichero `terminales.txt`."""
+
+    try:
+        content = TERMINAL_LIST_PATH.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        logger.warning("No se encontró el fichero de terminales en %s", TERMINAL_LIST_PATH)
+        return []
+    except OSError as exc:
+        logger.warning("No se pudo leer el fichero de terminales: %s", exc)
+        return []
+
+    terminals: List[Dict[str, str]] = []
+    for line in content.splitlines():
+        entry = line.strip()
+        if not entry or entry.startswith("#"):
+            continue
+        label = ""
+        ip = entry
+        if "," in entry:
+            name_part, ip_part = entry.split(",", 1)
+            label = name_part.strip()
+            ip = ip_part.strip() or ip
+        elif " " in entry:
+            parts = entry.split()
+            ip_candidate = parts[-1]
+            ip = ip_candidate.strip()
+            label = entry[: -len(ip_candidate)].strip()
+        terminals.append({
+            "ip": ip,
+            "label": label,
+        })
+    return terminals
+
+
+def upload_employees(
+    host: str, employees: Iterable[dict], port: int = DEFAULT_PORT
+) -> Tuple[List[str], List[Tuple[str, str]]]:
+    """Envía empleados al terminal creando o actualizando sus datos básicos."""
+
+    allowed_privileges = {
+        int(getattr(const, name))
+        for name in ("USER_DEFAULT", "USER_ADMIN", "USER_ENROLLER", "USER_SUPERADMIN")
+        if hasattr(const, name)
+    }
+
+    def _coerce_privilege(value) -> int:
+        if value is None:
+            return const.USER_DEFAULT
+        if isinstance(value, int):
+            return value
+        text = str(value).strip()
+        if not text:
+            return const.USER_DEFAULT
+        lowered = text.lower()
+        mapping = {
+            "admin": const.USER_ADMIN,
+            "superadmin": const.USER_ADMIN,
+            "user": const.USER_DEFAULT,
+            "default": const.USER_DEFAULT,
+        }
+        if lowered in mapping:
+            return mapping[lowered]
+        try:
+            numeric = int(text)
+        except ValueError:
+            return const.USER_DEFAULT
+        if allowed_privileges and numeric not in allowed_privileges:
+            return const.USER_DEFAULT
+        return numeric
+
+    zk = conn = None
+    uploaded: List[str] = []
+    errors: List[Tuple[str, str]] = []
+    try:
+        zk, conn = connect_with_retries(host, port)
+        if conn is None:
+            raise ValueError("No se pudo establecer conexión con el terminal.")
+        try:
+            conn.disable_device()
+        except Exception as exc:  # pragma: no cover - dependiente del terminal
+            logger.warning("No fue posible deshabilitar temporalmente el terminal %s: %s", host, exc)
+
+        try:
+            existing_users = conn.get_users()
+        except Exception as exc:  # pragma: no cover - dependiente del terminal
+            logger.warning("No fue posible recuperar usuarios existentes de %s: %s", host, exc)
+            existing_users = []
+
+        used_uids: Set[int] = set()
+        for user in existing_users:
+            try:
+                uid_int = int(getattr(user, "uid", None))
+            except (TypeError, ValueError):
+                continue
+            else:
+                used_uids.add(uid_int)
+
+        allocated_uids: Set[int] = set()
+        next_candidate = 1
+
+        def _allocate_uid() -> int:
+            nonlocal next_candidate
+            attempts = 0
+            while True:
+                if next_candidate not in used_uids and next_candidate not in allocated_uids:
+                    allocated_uids.add(next_candidate)
+                    assigned = next_candidate
+                    next_candidate += 1
+                    return assigned
+                next_candidate += 1
+                attempts += 1
+                if attempts > 200000:  # límite razonable para evitar bucles infinitos
+                    raise ValueError("No se encontraron UID libres en el terminal.")
+
+        for employee in employees:
+            uid_label = str(employee.get("uid", "") or "").strip()
+            name = str(employee.get("name", "") or "").strip()
+            user_id = str(employee.get("user_id", "") or "").strip()
+            group_id = str(employee.get("group_id", "") or "").strip()
+            privilege = _coerce_privilege(employee.get("privilege"))
+            card_value = employee.get("card")
+            card = str(card_value).strip() if card_value is not None else ""
+            if card.lower() in {"", "0", "none", "null"}:
+                card = None
+
+            if not uid_label and not user_id:
+                errors.append(("(sin identificador)", "UID o User ID inválido"))
+                continue
+
+            try:
+                new_uid = _allocate_uid()
+            except ValueError as exc:
+                errors.append((uid_label or user_id or "(sin identificador)", str(exc)))
+                break
+
+            payload = {
+                "uid": new_uid,
+                "name": name,
+                "privilege": privilege,
+                "group_id": group_id or "",
+                "user_id": user_id or "",
+                "password": "",
+            }
+            if card is not None:
+                payload["card"] = card
+
+            try:
+                conn.set_user(**payload)
+            except Exception as exc:  # pragma: no cover - dependiente del terminal
+                errors.append((uid_label or user_id or "(sin UID)", str(exc)))
+            else:
+                uploaded.append(uid_label or str(new_uid))
+    finally:
+        try:
+            if conn:
+                try:
+                    conn.enable_device()
+                except Exception:  # pragma: no cover - dependiente del terminal
+                    logger.exception("Error al habilitar nuevamente el terminal %s", host)
+                conn.disconnect()
+        except Exception:  # pragma: no cover - errores de red
+            logger.exception("Error al desconectar del terminal %s", host)
+
+    return uploaded, errors
 
 
 def _stringify_export_value(value):
@@ -240,8 +490,29 @@ def format_terminal_value(host: Optional[str], port: int) -> str:
 def _normalize_employee_record(raw: dict) -> dict:
     """Normaliza los datos de un empleado importado."""
 
+    key_aliases = {
+        "uid": {"uid", "id", "identificador"},
+        "name": {"name", "nombre"},
+        "user_id": {"user_id", "user id", "userid", "id usuario", "idusuario"},
+        "card": {"card", "tarjeta", "num tarjeta"},
+        "privilege": {"privilege", "privilegio"},
+        "group_id": {"group_id", "group id", "grupo", "id grupo", "grupo id"},
+        "biometrics": {"biometrics", "biometria", "biometría", "biometricas", "plantillas"},
+    }
+
+    normalized_keys = {}
+    for original_key, value in raw.items():
+        if isinstance(original_key, str):
+            normalized_keys[original_key.strip().lower()] = value
+
     def _safe_get(key: str):
-        for candidate in (key, key.lower(), key.upper()):
+        candidates = key_aliases.get(key, set()) | {key, key.lower(), key.upper()}
+        for candidate in candidates:
+            if not isinstance(candidate, str):
+                continue
+            candidate_key = candidate.strip().lower()
+            if candidate_key in normalized_keys:
+                return normalized_keys[candidate_key]
             if candidate in raw:
                 return raw.get(candidate)
         return raw.get(key)

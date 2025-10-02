@@ -95,3 +95,62 @@ document.addEventListener('DOMContentLoaded', () => {
     updateRowClasses();
     updateSelectionInfo();
 });
+
+document.addEventListener('DOMContentLoaded', () => {
+    const terminalHiddenInput = document.getElementById('terminal');
+    const terminalSelect = document.getElementById('terminal-select');
+    const customWrapper = document.querySelector('.terminal-custom');
+    const customInput = document.getElementById('terminal-custom');
+
+    if (!terminalHiddenInput || !terminalSelect) {
+        return;
+    }
+
+    const showCustom = () => {
+        if (customWrapper) {
+            customWrapper.classList.remove('d-none');
+        }
+        if (customInput) {
+            customInput.focus();
+        }
+    };
+
+    const hideCustom = () => {
+        if (customWrapper) {
+            customWrapper.classList.add('d-none');
+        }
+    };
+
+    const syncHidden = (value) => {
+        terminalHiddenInput.value = value.trim();
+    };
+
+    const handleSelectChange = () => {
+        const selectedValue = terminalSelect.value;
+        if (selectedValue === '__custom__') {
+            showCustom();
+            if (customInput) {
+                syncHidden(customInput.value);
+            } else {
+                syncHidden('');
+            }
+        } else {
+            hideCustom();
+            syncHidden(selectedValue);
+        }
+    };
+
+    terminalSelect.addEventListener('change', handleSelectChange);
+
+    if (customInput) {
+        customInput.addEventListener('input', () => {
+            if (terminalSelect.value !== '__custom__') {
+                terminalSelect.value = '__custom__';
+                showCustom();
+            }
+            syncHidden(customInput.value);
+        });
+    }
+
+    handleSelectChange();
+});

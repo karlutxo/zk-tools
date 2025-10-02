@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import logging
-from typing import Set
+from typing import List, Set
 
 from flask import Blueprint, flash, redirect, render_template, request, url_for
 
@@ -24,6 +24,10 @@ def index():
 
     employees = []
     selected: Set[str] = set()
+    terminal_status = None
+    terminal_status_errors: List[str] = []
+    known_terminals = services.load_known_terminals()
+    known_terminal_ips = [item["ip"] for item in known_terminals]
 
     def redirect_with_terminal():
         terminal_param = services.format_terminal_value(ip, port)
@@ -64,6 +68,53 @@ def index():
         if action == "select" and ip:
             selected_uids = set(request.form.getlist("selected"))
             services.set_selected_uids(ip, selected_uids)
+            return redirect_with_terminal()
+        if action == "status" and ip:
+            try:
+                terminal_status, terminal_status_errors = services.get_terminal_status(ip, port)
+            except Exception as exc:  # pragma: no cover - dependiente del dispositivo
+                logger.exception("Error al obtener el estado del terminal %s", ip)
+                flash(f"No se pudo obtener el estado del terminal: {exc}")
+                return redirect_with_terminal()
+        if action == "status":
+            if not ip:
+                flash("Debes indicar un terminal para consultar su estado.")
+                return redirect_with_terminal()
+        if action == "push" and ip:
+            selected_uids = set(request.form.getlist("selected"))
+            if not selected_uids:
+                flash("Selecciona al menos un empleado para enviar.")
+                return redirect_with_terminal()
+
+            cached_employees = services.get_cached_employees(ip)
+            if not cached_employees:
+                flash("No hay empleados en memoria para enviar. Carga o importa primero los empleados.")
+                return redirect_with_terminal()
+
+            selected_employees = [
+                emp for emp in cached_employees if emp.get("uid") in selected_uids
+            ]
+            if not selected_employees:
+                flash(
+                    "Los empleados seleccionados no están disponibles en caché. Consulta nuevamente el terminal."
+                )
+                return redirect_with_terminal()
+
+            services.set_selected_uids(ip, selected_uids)
+            try:
+                uploaded, errors = services.upload_employees(ip, selected_employees, port=port)
+            except Exception as exc:  # pragma: no cover - dependiente del dispositivo
+                logger.exception("Error al enviar empleados al terminal %s", ip)
+                flash(f"No se pudieron enviar los empleados seleccionados: {exc}")
+            else:
+                if uploaded:
+                    flash(f"Se enviaron {len(uploaded)} empleado(s) al terminal.")
+                if errors:
+                    for uid, message in errors:
+                        flash(f"No se pudo enviar el empleado {uid}: {message}")
+            return redirect_with_terminal()
+        if action == "push":
+            flash("Debes indicar un terminal para enviar empleados.")
             return redirect_with_terminal()
         if action == "delete" and ip:
             selected_uids = set(request.form.getlist("selected"))
@@ -164,4 +215,8 @@ def index():
         employee_map=employee_map,
         total_employees=total_employees,
         selected_count=selected_count,
+        terminal_status=terminal_status,
+        terminal_status_errors=terminal_status_errors,
+        known_terminals=known_terminals,
+        known_terminal_ips=known_terminal_ips,
     )

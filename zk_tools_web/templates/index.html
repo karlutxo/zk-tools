@@ -12,47 +12,55 @@
     <nav class="navbar navbar-expand-lg navbar-dark bg-primary">
         <div class="container-fluid">
             <span class="navbar-brand mb-0 h1">Gestión de empleados ZKTeco</span>
-            <span id="selection-info" class="badge bg-light text-dark fs-6" data-total="{{ total_employees }}" data-selected="{{ selected_count }}" title="Resumen de la selección actual">Seleccionados: {{ selected_count }} de {{ total_employees }}</span>
         </div>
     </nav>
     <main class="container my-4">
-        <form method="post" action="{{ url_for('main.index') }}" enctype="multipart/form-data" class="accordion mb-4 shadow-sm" id="controlAccordion">
-            <div class="accordion-item">
-                <h2 class="accordion-header" id="headingConnection">
-                    <button class="accordion-button" type="button" data-bs-toggle="collapse" data-bs-target="#collapseConnection" aria-expanded="true" aria-controls="collapseConnection">
-                        Terminales
-                    </button>
-                </h2>
-                <div id="collapseConnection" class="accordion-collapse collapse show" aria-labelledby="headingConnection" data-bs-parent="#controlAccordion">
-                    <div class="accordion-body">
-                        <div class="row g-3 align-items-end">
+        <form method="post" action="{{ url_for('main.index') }}" enctype="multipart/form-data" class="tabbed-controls mb-4 shadow-sm" id="controlTabsForm">
+            <ul class="nav nav-tabs bg-white border border-bottom-0 rounded-top" id="controlTabs" role="tablist">
+                <li class="nav-item" role="presentation">
+                    <button class="nav-link active" id="terminal-tab" data-bs-toggle="tab" data-bs-target="#terminal-pane" type="button" role="tab" aria-controls="terminal-pane" aria-selected="true">Terminales</button>
+                </li>
+                <li class="nav-item" role="presentation">
+                    <button class="nav-link" id="transfer-tab" data-bs-toggle="tab" data-bs-target="#transfer-pane" type="button" role="tab" aria-controls="transfer-pane" aria-selected="false">Exportación e Importación</button>
+                </li>
+            </ul>
+            <div class="tabbed-controls__container border border-top-0 rounded-bottom bg-white">
+                <div class="tab-content p-4" id="controlTabsContent">
+                    <div class="tab-pane fade show active" id="terminal-pane" role="tabpanel" aria-labelledby="terminal-tab" tabindex="0">
+                        <div class="row g-3 align-items-lg-center">
                             <div class="col-12">
                                 <div class="alert alert-info mb-0" role="status">
                                     Conexíon con el terminal. Carga y descarga de empleados.
                                 </div>
                             </div>
-                            <div class="col-12">
-                                <label for="terminal" class="form-label">Terminal</label>
-                                <input type="text" name="terminal" id="terminal" class="form-control" value="{{ terminal }}" placeholder="Ej. 192.168.1.10 o 192.168.1.10:4370" aria-describedby="terminalHelp">
-                                <div id="terminalHelp" class="form-text">Introduce la dirección del terminal. Puedes añadir el puerto con el formato IP:PUERTO.</div>
+                            <div class="col-12 col-lg-7 col-xl-6">
+                                <label for="terminal-select" class="form-label">Terminal</label>
+                                <input type="hidden" name="terminal" id="terminal" value="{{ terminal or '' }}">
+                                <select id="terminal-select" class="form-select" aria-describedby="terminalHelp">
+                                    <option value="" {% if not terminal %}selected{% endif %}>Selecciona un terminal…</option>
+                                    {% for known in known_terminals %}
+                                    <option value="{{ known.ip }}" {% if terminal == known.ip %}selected{% endif %}>
+                                        {% if known.label %}{{ known.label }} — {{ known.ip }}{% else %}{{ known.ip }}{% endif %}
+                                    </option>
+                                    {% endfor %}
+                                    <option value="__custom__" {% if terminal and terminal not in known_terminal_ips %}selected{% endif %}>Otro terminal…</option>
+                                </select>
+                                <div class="terminal-custom mt-2 {% if not terminal or terminal in known_terminal_ips %}d-none{% endif %}">
+                                    <input type="text" class="form-control" id="terminal-custom" value="{% if terminal and terminal not in known_terminal_ips %}{{ terminal }}{% endif %}" placeholder="Introduce la dirección IP manualmente">
+                                </div>
+                                <div id="terminalHelp" class="form-text">Selecciona un terminal conocido o introduce una dirección manualmente.</div>
+                            </div>
+                            <div class="col-12 col-lg-5 col-xl-4 d-flex align-items-start align-items-lg-center">
+                                <button id="status-button" type="submit" name="action" value="status" class="btn btn-outline-info w-100 w-lg-auto ms-lg-3" {% if not terminal %}disabled{% endif %} title="Muestra información detallada del terminal indicado">Estado del terminal</button>
                             </div>
                             <div class="col-12 d-flex flex-wrap gap-2">
-                                <button type="submit" name="action" value="fetch" class="btn btn-primary">Cargar empleados desde el terminal</button>
-                                <button type="submit" name="action" value="clear" class="btn btn-outline-secondary" onclick="return confirm('Esto eliminará a todos los empleados almacenados en memoria para este terminal. ¿Continuar?');">Limpiar</button>
-                                <button type="submit" name="action" value="delete" form="employees-form" class="btn btn-danger" {% if not employees %}disabled{% endif %} onclick="return confirm('¿Eliminar empleados seleccionados del terminal?');">Eliminar seleccionados en el terminal</button>
+                                <button type="submit" name="action" value="fetch" class="btn btn-primary" title="Captura y muestra los empleados del terminal indicado">Cargar empleados desde el terminal</button>
+                                <button type="submit" name="action" value="push" form="employees-form" class="btn btn-success" {% if not employees %}disabled{% endif %} title="Envía los empleados seleccionados al terminal indicado">Enviar empleados al terminal</button>
+                                <button type="submit" name="action" value="delete" form="employees-form" class="btn btn-danger ms-auto" {% if not employees %}disabled{% endif %} onclick="return confirm('¿Eliminar los empleados seleccionados del terminal?');" title="Borra los empleados seleccionados del terminal indicado">Eliminar del terminal</button>
                             </div>
                         </div>
                     </div>
-                </div>
-            </div>
-            <div class="accordion-item">
-                <h2 class="accordion-header" id="headingActions">
-                    <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#collapseActions" aria-expanded="false" aria-controls="collapseActions">
-                        Exportación e Importación
-                    </button>
-                </h2>
-                <div id="collapseActions" class="accordion-collapse collapse" aria-labelledby="headingActions" data-bs-parent="#controlAccordion">
-                    <div class="accordion-body">
+                    <div class="tab-pane fade" id="transfer-pane" role="tabpanel" aria-labelledby="transfer-tab" tabindex="0">
                         <div class="row g-3 align-items-end">
                             <div class="col-12">
                                 <div class="alert alert-info mb-0" role="status">
@@ -68,24 +76,90 @@
                                 <div id="fileHelp" class="form-text">Selecciona un archivo JSON, CSV o Excel para cargar empleados en la aplicación.</div>
                             </div>
                             <div class="col-12 d-flex flex-wrap gap-2 justify-content-md-end">
-                                <button type="submit" name="action" value="select" form="employees-form" class="btn btn-outline-primary" {% if not employees %}disabled{% endif %}>Recordar selección</button>
                                 <div class="btn-group">
                                     <button type="button" class="btn btn-success dropdown-toggle" data-bs-toggle="dropdown" aria-expanded="false" {% if not employees %}disabled{% endif %}>
                                         Exportar selección
                                     </button>
                                     <ul class="dropdown-menu dropdown-menu-end">
-                                        <li><button class="dropdown-item" type="submit" name="action" value="export_excel" form="employees-form" {% if not employees %}disabled{% endif %}>Excel</button></li>
-                                        <li><button class="dropdown-item" type="submit" name="action" value="export_csv" form="employees-form" {% if not employees %}disabled{% endif %}>CSV</button></li>
-                                        <li><button class="dropdown-item" type="submit" name="action" value="export_json" form="employees-form" {% if not employees %}disabled{% endif %}>JSON</button></li>
+                                        <li>
+                                            <button class="dropdown-item d-flex align-items-center gap-2" type="submit" name="action" value="export_excel" form="employees-form" {% if not employees %}disabled{% endif %}>
+                                                <svg class="export-icon" viewBox="0 0 16 16" aria-hidden="true" focusable="false">
+                                                    <path d="M4 0h5.5L14 4.5V14a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V2a2 2 0 0 1 2-2zm5.5 1.5V5h3.5L9.5 1.5zM6.354 8.146 5 9.5l1.354 1.354-.708.708L4.293 10.5l-1.353 1.354-.708-.708L3.586 9.5 2.232 8.146l.708-.708L4.293 8.5l1.353-1.354.708.708zM11 9a1 1 0 0 0-1-1H8v4h2a1 1 0 0 0 1-1v-2zm-1 0v2H9V9h1z"/>
+                                                </svg>
+                                                <span>Excel</span>
+                                            </button>
+                                        </li>
+                                        <li>
+                                            <button class="dropdown-item d-flex align-items-center gap-2" type="submit" name="action" value="export_csv" form="employees-form" {% if not employees %}disabled{% endif %}>
+                                                <svg class="export-icon" viewBox="0 0 16 16" aria-hidden="true" focusable="false">
+                                                    <path d="M4 0h5.5L14 4.5V14a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V2a2 2 0 0 1 2-2zm5.5 1.5V5h3.5L9.5 1.5zM5.5 8.5a1.5 1.5 0 1 0 0 3h.5v-1h-.5a.5.5 0 1 1 0-1h.5v-1h-.5zm3 .5c.3 0 .5.2.5.5v2c0 .3-.2.5-.5.5s-.5-.2-.5-.5v-.5H8v.5a1.5 1.5 0 0 0 3 0v-2a1.5 1.5 0 0 0-3 0h1c0-.3.2-.5.5-.5zm2 .5c0 .3.2.5.5.5h.5a.5.5 0 0 1 0 1H11a1.5 1.5 0 1 0 0-3h-.5v1H11c.3 0 .5.2.5.5z"/>
+                                                </svg>
+                                                <span>CSV</span>
+                                            </button>
+                                        </li>
+                                        <li>
+                                            <button class="dropdown-item d-flex align-items-center gap-2" type="submit" name="action" value="export_json" form="employees-form" {% if not employees %}disabled{% endif %}>
+                                                <svg class="export-icon" viewBox="0 0 16 16" aria-hidden="true" focusable="false">
+                                                    <path d="M4 0h5.5L14 4.5V14a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V2a2 2 0 0 1 2-2zm5.5 1.5V5h3.5L9.5 1.5zM5.75 8A1.75 1.75 0 0 0 4 9.75v1.5A1.75 1.75 0 0 0 5.75 13h.5a.75.75 0 0 0 0-1.5h-.5a.25.25 0 0 1-.25-.25v-1.5c0-.138.112-.25.25-.25h.5A.75.75 0 0 0 6.5 8h-.75zm2.25 0a.75.75 0 0 0-.75.75v3.5c0 .414.336.75.75.75h1a1.5 1.5 0 0 0 0-3H8.75V9.5h.75a.5.5 0 0 1 0 1H9v1h.5a.5.5 0 0 1 0 1H9v-4H8zm4.5.75a.75.75 0 0 0-1.5 0v3.5a.75.75 0 0 0 1.5 0v-3.5z"/>
+                                                </svg>
+                                                <span>JSON</span>
+                                            </button>
+                                        </li>
                                     </ul>
                                 </div>
                             </div>
                         </div>
-                        <p class="text-muted small mt-3 mb-0">Las acciones se aplican únicamente a los empleados seleccionados en la tabla de abajo.</p>
+                    </div>
+                </div>
+                <div class="tabbed-controls__footer border-top px-4 py-3 d-flex flex-column flex-md-row align-items-md-center gap-3">
+                    <div class="selection-summary">
+                        <span id="selection-info" class="selection-status badge fs-6" data-total="{{ total_employees }}" data-selected="{{ selected_count }}" title="Resumen de la selección actual">Seleccionados: {{ selected_count }} de {{ total_employees }}</span>
+                        <small class="selection-note">Las acciones se aplican únicamente a los empleados seleccionados en la tabla de abajo.</small>
+                    </div>
+                    <div class="ms-md-auto d-flex flex-wrap gap-2">
+                        <button type="submit" name="action" value="select" form="employees-form" class="btn btn-outline-primary" {% if not employees %}disabled{% endif %} title="Conserva la selección de empleados aunque refresque la página.">Recordar selección</button>
+                        <button type="submit" name="action" value="clear" class="btn btn-outline-secondary" title="Vacía la tabla de empleados mostrados. No los borra del terminal">Limpiar</button>
                     </div>
                 </div>
             </div>
         </form>
+
+        <div class="modal fade" id="terminalStatusModal" tabindex="-1" aria-labelledby="terminalStatusModalLabel" aria-hidden="true">
+            <div class="modal-dialog modal-lg modal-dialog-centered">
+                <div class="modal-content">
+                    <div class="modal-header">
+                        <h5 class="modal-title" id="terminalStatusModalLabel">Estado del terminal</h5>
+                        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Cerrar"></button>
+                    </div>
+                    <div class="modal-body">
+                        {% if terminal_status %}
+                        <dl class="row g-3 mb-0">
+                            {% for key, value in terminal_status.items() %}
+                            <dt class="col-sm-5">{{ key }}</dt>
+                            <dd class="col-sm-7">{{ value }}</dd>
+                            {% endfor %}
+                        </dl>
+                        {% else %}
+                        <p class="text-muted mb-0">No hay información disponible del terminal.</p>
+                        {% endif %}
+                        {% if terminal_status_errors %}
+                        <hr>
+                        <div class="alert alert-warning mb-0" role="alert">
+                            <p class="fw-semibold mb-2">Avisos:</p>
+                            <ul class="mb-0">
+                                {% for message in terminal_status_errors %}
+                                <li>{{ message }}</li>
+                                {% endfor %}
+                            </ul>
+                        </div>
+                        {% endif %}
+                    </div>
+                    <div class="modal-footer">
+                        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cerrar</button>
+                    </div>
+                </div>
+            </div>
+        </div>
 
         {% with messages = get_flashed_messages() %}
             {% if messages %}
@@ -159,5 +233,15 @@
     <script src="https://cdn.datatables.net/1.13.6/js/jquery.dataTables.min.js"></script>
     <script src="https://cdn.datatables.net/1.13.6/js/dataTables.bootstrap5.min.js"></script>
     <script src="{{ url_for('static', filename='js/app.js') }}"></script>
+    {% if terminal_status or terminal_status_errors %}
+    <script>
+        (function showTerminalStatusModal() {
+            const modalElement = document.getElementById('terminalStatusModal');
+            if (!modalElement) { return; }
+            const modal = new bootstrap.Modal(modalElement);
+            modal.show();
+        }());
+    </script>
+    {% endif %}
 </body>
 </html>
