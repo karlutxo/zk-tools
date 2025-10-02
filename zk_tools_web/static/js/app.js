@@ -13,7 +13,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     const $table = $('#employees-table');
     $table.DataTable({
-        pageLength: 50,
+        pageLength: 25,
         order: [[1, 'asc']],
         autoWidth: false,
         columnDefs: [

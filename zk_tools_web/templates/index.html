@@ -27,19 +27,19 @@
                     <div class="accordion-body">
                         <div class="row g-3 align-items-end">
                             <div class="col-12">
+                                <div class="alert alert-info mb-0" role="status">
+                                    Conexíon con el terminal. Carga y descarga de empleados.
+                                </div>
+                            </div>
+                            <div class="col-12">
                                 <label for="terminal" class="form-label">Terminal</label>
                                 <input type="text" name="terminal" id="terminal" class="form-control" value="{{ terminal }}" placeholder="Ej. 192.168.1.10 o 192.168.1.10:4370" aria-describedby="terminalHelp">
                                 <div id="terminalHelp" class="form-text">Introduce la dirección del terminal. Puedes añadir el puerto con el formato IP:PUERTO.</div>
                             </div>
-                            <div class="col-12">
-                                <div class="alert alert-info mb-0" role="status">
-                                    Usa estas opciones para conectarte con el terminal. Las herramientas de importación y exportación se encuentran en la sección siguiente.
-                                </div>
-                            </div>
                             <div class="col-12 d-flex flex-wrap gap-2">
-                                <button type="submit" name="action" value="fetch" class="btn btn-primary">Leer empleados</button>
+                                <button type="submit" name="action" value="fetch" class="btn btn-primary">Cargar empleados desde el terminal</button>
                                 <button type="submit" name="action" value="clear" class="btn btn-outline-secondary" onclick="return confirm('Esto eliminará a todos los empleados almacenados en memoria para este terminal. ¿Continuar?');">Limpiar</button>
-                                <button type="submit" name="action" value="delete" form="employees-form" class="btn btn-danger" {% if not employees %}disabled{% endif %} onclick="return confirm('¿Eliminar empleados seleccionados del terminal?');">Eliminar seleccionados</button>
+                                <button type="submit" name="action" value="delete" form="employees-form" class="btn btn-danger" {% if not employees %}disabled{% endif %} onclick="return confirm('¿Eliminar empleados seleccionados del terminal?');">Eliminar seleccionados en el terminal</button>
                             </div>
                         </div>
                     </div>
@@ -54,6 +54,11 @@
                 <div id="collapseActions" class="accordion-collapse collapse" aria-labelledby="headingActions" data-bs-parent="#controlAccordion">
                     <div class="accordion-body">
                         <div class="row g-3 align-items-end">
+                            <div class="col-12">
+                                <div class="alert alert-info mb-0" role="status">
+                                    Exportación e Importación de empleados a/desde fichero.
+                                </div>
+                            </div>
                             <div class="col-12 col-lg-6">
                                 <label for="employee-file" class="form-label">Archivo de empleados</label>
                                 <div class="input-group">
@@ -63,15 +68,15 @@
                                 <div id="fileHelp" class="form-text">Selecciona un archivo JSON, CSV o Excel para cargar empleados en la aplicación.</div>
                             </div>
                             <div class="col-12 d-flex flex-wrap gap-2 justify-content-md-end">
-                                <button type="submit" name="action" value="select" form="employees-form" class="btn btn-outline-primary" {% if not employees %}disabled{% endif %}>Guardar selección</button>
+                                <button type="submit" name="action" value="select" form="employees-form" class="btn btn-outline-primary" {% if not employees %}disabled{% endif %}>Recordar selección</button>
                                 <div class="btn-group">
                                     <button type="button" class="btn btn-success dropdown-toggle" data-bs-toggle="dropdown" aria-expanded="false" {% if not employees %}disabled{% endif %}>
                                         Exportar selección
                                     </button>
                                     <ul class="dropdown-menu dropdown-menu-end">
-                                        <li><button class="dropdown-item" type="submit" name="action" value="export_csv" form="employees-form" {% if not employees %}disabled{% endif %}>Exportar CSV</button></li>
-                                        <li><button class="dropdown-item" type="submit" name="action" value="export_json" form="employees-form" {% if not employees %}disabled{% endif %}>Exportar JSON</button></li>
-                                        <li><button class="dropdown-item" type="submit" name="action" value="export_excel" form="employees-form" {% if not employees %}disabled{% endif %}>Exportar Excel</button></li>
+                                        <li><button class="dropdown-item" type="submit" name="action" value="export_excel" form="employees-form" {% if not employees %}disabled{% endif %}>Excel</button></li>
+                                        <li><button class="dropdown-item" type="submit" name="action" value="export_csv" form="employees-form" {% if not employees %}disabled{% endif %}>CSV</button></li>
+                                        <li><button class="dropdown-item" type="submit" name="action" value="export_json" form="employees-form" {% if not employees %}disabled{% endif %}>JSON</button></li>
                                     </ul>
                                 </div>
                             </div>

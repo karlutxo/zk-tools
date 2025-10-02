@@ -42,7 +42,7 @@ La tabla de resultados admite seleccionar todos los empleados, filtrar por texto
 ```bash
 python3 -m venv .venv
 source .venv/bin/activate
-pip install -r requirements.txt flask
+pip install -r requirements.txt
 python app.py
 ```
 
