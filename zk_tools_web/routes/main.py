@@ -7,6 +7,7 @@ from typing import List, Set
 from flask import Blueprint, flash, redirect, render_template, request, url_for
 
 from .. import services
+from .auth import login_required
 
 bp = Blueprint("main", __name__)
 
@@ -14,6 +15,7 @@ logger = logging.getLogger(__name__)
 
 
 @bp.route("/", methods=["GET", "POST"])
+@login_required
 def index():
     """Página principal para administrar empleados."""
     terminal_value = request.values.get("terminal")
@@ -80,6 +82,18 @@ def index():
             if not ip:
                 flash("Debes indicar un terminal para consultar su estado.")
                 return redirect_with_terminal()
+        if action == "sync_time" and ip:
+            try:
+                services.sync_terminal_time(ip, port)
+            except Exception as exc:  # pragma: no cover - dependiente del dispositivo
+                logger.exception("Error al sincronizar la hora del terminal %s", ip)
+                flash(f"No se pudo sincronizar la fecha y hora: {exc}")
+            else:
+                flash("Fecha y hora sincronizadas con éxito.")
+            return redirect_with_terminal()
+        if action == "sync_time":
+            flash("Debes indicar un terminal para actualizar la hora.")
+            return redirect_with_terminal()
         if action == "push" and ip:
             selected_uids = set(request.form.getlist("selected"))
             if not selected_uids:

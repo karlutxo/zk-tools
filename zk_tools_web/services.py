@@ -220,6 +220,7 @@ def load_known_terminals() -> List[Dict[str, str]]:
         return []
 
     terminals: List[Dict[str, str]] = []
+    seen_ips = set()
     for line in content.splitlines():
         entry = line.strip()
         if not entry or entry.startswith("#"):
@@ -235,6 +236,9 @@ def load_known_terminals() -> List[Dict[str, str]]:
             ip_candidate = parts[-1]
             ip = ip_candidate.strip()
             label = entry[: -len(ip_candidate)].strip()
+        if not ip or ip in seen_ips:
+            continue
+        seen_ips.add(ip)
         terminals.append({
             "ip": ip,
             "label": label,
@@ -372,6 +376,24 @@ def upload_employees(
             logger.exception("Error al desconectar del terminal %s", host)
 
     return uploaded, errors
+
+
+def sync_terminal_time(host: str, port: int = DEFAULT_PORT) -> None:
+    """Sincroniza la fecha y hora del terminal con la del sistema."""
+
+    zk = conn = None
+    try:
+        zk, conn = connect_with_retries(host, port)
+        if conn is None:
+            raise ValueError("No se pudo establecer conexión con el terminal.")
+        conn.enable_device()
+        conn.set_time(datetime.now())
+    finally:
+        try:
+            if conn:
+                conn.disconnect()
+        except Exception:  # pragma: no cover - errores de red
+            logger.exception("Error al desconectar del terminal %s", host)
 
 
 def _stringify_export_value(value):

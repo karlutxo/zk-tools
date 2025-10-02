@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="es">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Acceso | Gestión de empleados ZKTeco</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/styles.css') }}">
+</head>
+<body class="bg-light">
+    <nav class="navbar navbar-expand-lg navbar-dark bg-primary">
+        <div class="container-fluid">
+            <span class="navbar-brand mb-0 h1">Gestión de empleados ZKTeco</span>
+            {% if current_user %}
+            <div class="d-flex align-items-center gap-2">
+                <span class="navbar-text">{{ current_user.username }}</span>
+                <a class="btn btn-sm btn-outline-light" href="{{ url_for('main.index') }}">Panel principal</a>
+                <a class="btn btn-sm btn-outline-light" href="{{ url_for('auth.logout') }}">Salir</a>
+            </div>
+            {% endif %}
+        </div>
+    </nav>
+
+    <main class="container py-5">
+        {% with messages = get_flashed_messages() %}
+            {% if messages %}
+                <div class="alert alert-info alert-dismissible fade show" role="alert">
+                    <ul class="mb-0">
+                        {% for message in messages %}
+                        <li>{{ message }}</li>
+                        {% endfor %}
+                    </ul>
+                    <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Cerrar"></button>
+                </div>
+            {% endif %}
+        {% endwith %}
+
+        <div class="row justify-content-center">
+            <div class="col-12 col-md-6 col-lg-4">
+                <div class="card shadow-sm">
+                    <div class="card-body">
+                        <h1 class="h4 mb-4 text-center">Inicia sesión</h1>
+                        <form method="post" action="{{ url_for('auth.login', next=request.args.get('next')) }}">
+                            <div class="mb-3">
+                                <label for="username" class="form-label">Usuario</label>
+                                <input type="text" class="form-control" id="username" name="username" autocomplete="username" required>
+                            </div>
+                            <div class="mb-4">
+                                <label for="password" class="form-label">Contraseña</label>
+                                <input type="password" class="form-control" id="password" name="password" autocomplete="current-password" required>
+                            </div>
+                            <div class="d-grid">
+                                <button type="submit" class="btn btn-primary">Acceder</button>
+                            </div>
+                        </form>
+                        <p class="mt-4 text-muted small mb-0">Se crea un usuario administrador inicial <strong>admin / admin123</strong>. Recuerda cambiar la contraseña tras iniciar sesión.</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </main>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
+</body>
+</html>
