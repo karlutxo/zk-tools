@@ -1,3 +1,5 @@
 git+https://github.com/karlutxo/pyZK@master#egg=pyzk
 openpyxl>=3.1.0
+gunicorn>=21.2.0
+Flask>=2.3
 

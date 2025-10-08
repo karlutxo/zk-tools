@@ -1,0 +1,22 @@
+version: "3.9"
+
+services:
+  zk-tools-web:
+    build: .
+    container_name: zk-tools-web
+    restart: unless-stopped
+    environment:
+      ZK_TOOLS_SECRET: "${ZK_TOOLS_SECRET}"
+      TZ: "Atlantic/Canary"
+    network_mode: "host"
+    volumes:
+      - zk_tools_data:/app/zk_tools_web/data
+    # Si quieres logs locales:
+    # logging:
+    #   driver: json-file
+    #   options:
+    #     max-size: "10m"
+    #     max-file: "3"
+
+volumes:
+  zk_tools_data:

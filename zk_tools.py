@@ -3,7 +3,7 @@ from __future__ import print_function  # permite print() en Python 2.7
 import argparse
 import socket
 import sys
-import time
+import os, time
 import datetime
 
 from zk import ZK, const  # pyzk / zk

@@ -4,11 +4,13 @@ from __future__ import annotations
 from flask import Flask, g
 
 from . import db
+import os
 
 def create_app() -> Flask:
     """Crea y configura la aplicación Flask."""
     app = Flask(__name__, template_folder="templates", static_folder="static")
-    app.secret_key = "zk-tools-dev"
+#    app.secret_key = "zk-tools-dev"
+    app.secret_key = os.getenv("ZK_TOOLS_SECRET", "fapdavnajkds232ñfdañva")
 
     db.init_app(app)
 
