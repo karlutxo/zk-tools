@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import logging
-from typing import List, Set
+from typing import Dict, List, Set
 
 from flask import Blueprint, flash, redirect, render_template, request, url_for
 
@@ -24,21 +24,27 @@ def index():
     ip = parsed_ip or fallback_ip
     port = parsed_port if parsed_ip else services.coerce_port(request.values.get("port"))
 
-    employees = []
+    employees: List[dict] = []
     selected: Set[str] = set()
+    override_employees: List[dict] | None = None
     terminal_status = None
     terminal_status_errors: List[str] = []
     known_terminals = services.load_known_terminals()
     known_terminal_ips = [item["ip"] for item in known_terminals]
+    expand_details_value = (request.values.get("expand_details") or "").lower()
+    expand_details = expand_details_value in {"1", "true", "on"}
 
     def redirect_with_terminal():
+        redirect_params = {}
         terminal_param = services.format_terminal_value(ip, port)
         if terminal_param:
-            return redirect(url_for("main.index", terminal=terminal_param))
+            redirect_params["terminal"] = terminal_param
         fallback_terminal = (terminal_value or "").strip()
         if fallback_terminal:
-            return redirect(url_for("main.index", terminal=fallback_terminal))
-        return redirect(url_for("main.index"))
+            redirect_params.setdefault("terminal", fallback_terminal)
+        if expand_details:
+            redirect_params["expand_details"] = "1"
+        return redirect(url_for("main.index", **redirect_params))
 
     if request.method == "POST":
         action = request.form.get("action")
@@ -203,8 +209,28 @@ def index():
             services.clear_all_cache()
             flash("Se limpiaron los empleados almacenados en memoria.")
             return redirect(url_for("main.index"))
+        if action == "duplicates":
+            if not ip:
+                flash("Debes indicar un terminal para buscar duplicados.")
+                return redirect_with_terminal()
+            cached_employees = services.get_cached_employees(ip)
+            if not cached_employees:
+                flash("No hay empleados en memoria. Consulta primero el terminal.")
+                return redirect_with_terminal()
+            duplicate_employees = services.find_duplicate_employees(cached_employees)
+            if duplicate_employees:
+                flash(
+                    f"Se encontraron {len(duplicate_employees)} empleado(s) con el mismo nombre y distinto User ID."
+                )
+            else:
+                flash("No se encontraron empleados duplicados por nombre con distinto User ID.")
+            override_employees = duplicate_employees
 
-    if ip:
+    if override_employees is not None:
+        employees = override_employees
+        if ip:
+            selected = services.get_selected_uids(ip)
+    elif ip:
         employees = services.get_cached_employees(ip)
         selected = services.get_selected_uids(ip)
 
@@ -218,6 +244,38 @@ def index():
     terminal_display = services.format_terminal_value(ip, port)
     if not terminal_display and terminal_value:
         terminal_display = terminal_value.strip()
+    cached_employee_count = len(services.get_cached_employees(ip)) if ip else 0
+    external_employee_details: Dict[str, dict] = {}
+    resolved_external_employee_details: Dict[str, dict] = {}
+    employee_last_seen: Dict[str, str] = {}
+
+    if employees:
+        try:
+            user_lookup_map = services.get_external_employee_map()
+        except Exception as exc:  # pragma: no cover - dependiente del servicio externo
+            logger.exception("No se pudo obtener la información externa de empleados: %s", exc)
+        else:
+            for employee in employees:
+                user_id_value = employee.get("user_id")
+                details = services.lookup_external_employee(user_id_value, user_lookup_map)
+                if not details:
+                    continue
+                formatted_last_seen = services.format_relative_time(details.get("last_seen"))
+                employee_last_seen[str(employee.get("uid"))] = formatted_last_seen
+
+    if expand_details:
+        try:
+            external_employee_details = services.get_external_employee_map_by_dni()
+        except Exception as exc:  # pragma: no cover - dependiente del servicio externo
+            logger.exception("No se pudo ampliar la información de empleados: %s", exc)
+            flash("No se pudo obtener la información ampliada de empleados.")
+            expand_details = False
+        else:
+            for employee in employees:
+                candidate_name = employee.get("name")
+                details = services.lookup_external_employee(candidate_name, external_employee_details)
+                if details:
+                    resolved_external_employee_details[str(employee.get("uid"))] = details
 
     return render_template(
         "index.html",
@@ -233,4 +291,10 @@ def index():
         terminal_status_errors=terminal_status_errors,
         known_terminals=known_terminals,
         known_terminal_ips=known_terminal_ips,
+        showing_duplicates=override_employees is not None,
+        cached_employee_count=cached_employee_count,
+        expand_details=expand_details,
+        external_employee_details=external_employee_details,
+        resolved_external_employee_details=resolved_external_employee_details,
+        employee_last_seen=employee_last_seen,
     )

@@ -23,6 +23,7 @@ python zk_tools_py.py 192.9.210.91 --sync-time
 ### Otras Utilidades ###
 python zk_tools_py.py 192.9.210.91 --voice-test
 python zk_tools_py.py 192.9.210.91 --disable --list-users --enable
+python zk_tools.py 192.9.109.212 --list-users --solo-tarjeta --set-verif-mode # Cambia el modo de autenticación a solo_tarjeta # Cambia el modo de autenticación a solo_tarjeta
 
 ### Documentación ###
 https://pyzk.readthedocs.io/en/stable/

@@ -4,10 +4,13 @@ from __future__ import annotations
 import csv
 import json
 import logging
-from datetime import datetime
+from collections import defaultdict
+from datetime import datetime, timedelta, timezone
 from io import BytesIO, StringIO
 from pathlib import Path
 from typing import Dict, Iterable, List, Optional, Sequence, Set, Tuple
+from urllib.error import URLError
+from urllib.request import urlopen
 
 from flask import make_response, send_file
 from openpyxl import Workbook, load_workbook
@@ -20,6 +23,10 @@ logger = logging.getLogger(__name__)
 TERMINAL_EMPLOYEES: Dict[str, List[dict]] = {}
 SELECTED_EMPLOYEES: Dict[str, Set[str]] = {}
 TERMINAL_LIST_PATH = Path(__file__).resolve().parent.parent / "terminales.txt"
+
+EXTERNAL_EMPLOYEE_URL = "http://lpa6.bonny.eu:8888/rh/zk.employees"
+EXTERNAL_EMPLOYEE_CACHE_TTL = timedelta(hours=2)
+EXTERNAL_EMPLOYEE_CACHE: Dict[str, object] = {"data": None, "timestamp": None}
 
 EXPORT_COLUMNS: Sequence[Tuple[str, str]] = (
     ("uid", "UID"),
@@ -664,3 +671,222 @@ def remove_selected_uids(host: str, uids: Iterable[str]) -> None:
         return
     existing.difference_update({str(uid) for uid in uids})
     SELECTED_EMPLOYEES[host] = existing
+
+
+def find_duplicate_employees(employees: Iterable[dict]) -> List[dict]:
+    """Devuelve empleados que comparten nombre pero tienen distinto user_id."""
+    name_to_user_ids: Dict[str, Set[str]] = defaultdict(set)
+
+    normalized_employees: List[Tuple[str, dict]] = []
+    for employee in employees:
+        raw_name = (employee.get("name") or "").strip()
+        normalized_name = raw_name.casefold()
+        user_id_value = str(employee.get("user_id") or "").strip()
+
+        normalized_employees.append((normalized_name, employee))
+        name_to_user_ids[normalized_name].add(user_id_value)
+
+    duplicate_names = {
+        normalized_name
+        for normalized_name, user_ids in name_to_user_ids.items()
+        if len(user_ids) > 1 and normalized_name
+    }
+
+    if not duplicate_names:
+        return []
+
+    return [
+        employee
+        for normalized_name, employee in normalized_employees
+        if normalized_name in duplicate_names
+    ]
+
+
+def _download_external_employees() -> List[dict]:
+    """Descarga la lista de empleados externos desde el endpoint remoto."""
+    try:
+        with urlopen(EXTERNAL_EMPLOYEE_URL, timeout=15) as response:  # nosec: B310 - endpoint controlado
+            status = getattr(response, "status", response.getcode())
+            if status and status >= 400:
+                raise ValueError(f"Respuesta inesperada ({status}) al consultar empleados externos.")
+            payload = response.read()
+    except URLError as exc:
+        raise RuntimeError(f"No se pudo conectar con la fuente de empleados externa: {exc}") from exc
+
+    try:
+        data = json.loads(payload.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise ValueError("La respuesta de empleados externa no es un JSON válido.") from exc
+
+    if not isinstance(data, list):
+        raise ValueError("La respuesta de empleados externa no es una lista.")
+
+    return data
+
+
+def load_external_employees(force_refresh: bool = False) -> List[dict]:
+    """Obtiene la lista de empleados externos, usando caché durante 2 horas."""
+    cached_data = EXTERNAL_EMPLOYEE_CACHE.get("data")
+    cached_timestamp = EXTERNAL_EMPLOYEE_CACHE.get("timestamp")
+    now = datetime.now(timezone.utc)
+
+    if (
+        not force_refresh
+        and cached_data
+        and isinstance(cached_timestamp, datetime)
+        and now - cached_timestamp < EXTERNAL_EMPLOYEE_CACHE_TTL
+    ):
+        return cached_data
+
+    try:
+        data = _download_external_employees()
+    except Exception as exc:
+        logger.exception("Error al refrescar los empleados externos: %s", exc)
+        if cached_data:
+            return cached_data
+        raise
+
+    EXTERNAL_EMPLOYEE_CACHE["data"] = data
+    EXTERNAL_EMPLOYEE_CACHE["timestamp"] = now
+    return data
+
+
+def _store_external_mapping_entry(
+    mapping: Dict[str, dict],
+    user_code: str,
+    payload: dict,
+) -> None:
+    """Agrega un registro al mapeo usando variaciones comunes del código."""
+    if not user_code:
+        return
+
+    mapping[user_code] = payload
+
+    trimmed = user_code.lstrip("0")
+    if trimmed and trimmed != user_code:
+        mapping.setdefault(trimmed, payload)
+
+    upper_original = user_code.upper()
+    if upper_original not in mapping:
+        mapping[upper_original] = payload
+
+    if trimmed:
+        upper_trimmed = trimmed.upper()
+        if upper_trimmed not in mapping:
+            mapping[upper_trimmed] = payload
+
+
+def get_external_employee_map(force_refresh: bool = False) -> Dict[str, dict]:
+    """Devuelve un diccionario user_id -> datos ampliados del empleado."""
+    external_employees = load_external_employees(force_refresh=force_refresh)
+    mapping: Dict[str, dict] = {}
+    for record in external_employees:
+        user_code = str(record.get("CODIGO_ZK_ATRIBUTO") or "").strip()
+        if not user_code:
+            continue
+        payload = {
+            "dni": str(record.get("DNI") or "").strip(),
+            "nombre": str(record.get("NOMBRE") or "").strip(),
+            "cod_ct": str(record.get("COD_CT") or "").strip(),
+            "last_seen": record.get("LAST_SEEN"),
+        }
+        _store_external_mapping_entry(mapping, user_code, payload)
+    return mapping
+
+
+def get_external_employee_map_by_dni(force_refresh: bool = False) -> Dict[str, dict]:
+    """Construye un diccionario con clave DNI para datos ampliados."""
+    external_employees = load_external_employees(force_refresh=force_refresh)
+    mapping: Dict[str, dict] = {}
+    for record in external_employees:
+        dni = str(record.get("DNI") or "").strip()
+        if not dni:
+            continue
+        payload = {
+            "dni": dni,
+            "nombre": str(record.get("NOMBRE") or "").strip(),
+            "cod_ct": str(record.get("COD_CT") or "").strip(),
+            "last_seen": record.get("LAST_SEEN"),
+        }
+        normalized = dni.upper()
+        mapping.setdefault(dni, payload)
+        mapping.setdefault(normalized, payload)
+    return mapping
+
+
+def lookup_external_employee(identifier: str, mapping: Dict[str, dict]) -> Optional[dict]:
+    """Busca un empleado externo usando variaciones comunes del identificador."""
+    if not identifier:
+        return None
+
+    candidate = str(identifier).strip()
+    if not candidate:
+        return None
+
+    variations = [
+        candidate,
+        candidate.upper(),
+    ]
+
+    trimmed = candidate.lstrip("0")
+    if trimmed:
+        variations.extend([trimmed, trimmed.upper()])
+
+    for key in variations:
+        if key and key in mapping:
+            return mapping[key]
+    return None
+
+
+def format_relative_time(value: Optional[str], default: str = "N/A") -> str:
+    """Convierte una fecha ISO en un texto relativo (p.ej. '4 hours ago')."""
+    if not value:
+        return default
+
+    try:
+        parsed = datetime.fromisoformat(value)
+    except ValueError:
+        try:
+            parsed_date = datetime.strptime(value, "%Y-%m-%d")
+        except ValueError:
+            return default
+        parsed = datetime(
+            parsed_date.year,
+            parsed_date.month,
+            parsed_date.day,
+            tzinfo=timezone.utc,
+        )
+
+    if not isinstance(parsed, datetime):
+        parsed = datetime(parsed.year, parsed.month, parsed.day, tzinfo=timezone.utc)
+
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+
+    now = datetime.now(timezone.utc)
+    delta = now - parsed
+    seconds = delta.total_seconds()
+
+    if abs(seconds) < 60:
+        return "just now"
+
+    future = seconds < 0
+    seconds = abs(seconds)
+
+    units = (
+        (365 * 24 * 3600, "year"),
+        (30 * 24 * 3600, "month"),
+        (7 * 24 * 3600, "week"),
+        (24 * 3600, "day"),
+        (3600, "hour"),
+        (60, "minute"),
+    )
+
+    for unit_seconds, unit_name in units:
+        if seconds >= unit_seconds:
+            value_count = int(seconds // unit_seconds)
+            plural = "s" if value_count != 1 else ""
+            text = f"{value_count} {unit_name}{plural}"
+            return f"in {text}" if future else f"{text} ago"
+
+    return default

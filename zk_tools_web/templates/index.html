@@ -51,6 +51,9 @@
                 <li class="nav-item" role="presentation">
                     <button class="nav-link" id="transfer-tab" data-bs-toggle="tab" data-bs-target="#transfer-pane" type="button" role="tab" aria-controls="transfer-pane" aria-selected="false">Exportación e Importación</button>
                 </li>
+                <li class="nav-item" role="presentation">
+                    <button class="nav-link" id="utilities-tab" data-bs-toggle="tab" data-bs-target="#utilities-pane" type="button" role="tab" aria-controls="utilities-pane" aria-selected="false">Utilidades</button>
+                </li>
             </ul>
             <div class="tabbed-controls__container border border-top-0 rounded-bottom bg-white">
                 <div class="tab-content p-4" id="controlTabsContent">
@@ -138,11 +141,36 @@
                             </div>
                         </div>
                     </div>
+                    <div class="tab-pane fade" id="utilities-pane" role="tabpanel" aria-labelledby="utilities-tab" tabindex="0">
+                        <div class="row g-3">
+                            <div class="col-12">
+                                <div class="alert alert-info mb-0" role="status">
+                                    Herramientas para revisar la información descargada del terminal.
+                                </div>
+                            </div>
+                            <div class="col-12">
+                                <button type="submit" name="action" value="duplicates" class="btn btn-outline-primary" {% if cached_employee_count < 2 %}disabled{% endif %} title="Busca empleados con el mismo nombre pero distinto User ID">
+                                    Empleados duplicados
+                                </button>
+                                <small class="text-muted ms-2 d-inline-block">Necesita empleados cargados en memoria.</small>
+                            </div>
+                            <div class="col-12">
+                                <div class="form-check">
+                                    <input class="form-check-input" type="checkbox" value="1" id="expand-details" name="expand_details" {% if expand_details %}checked{% endif %} data-auto-submit="true" {% if cached_employee_count == 0 %}disabled{% endif %}>
+                                    <label class="form-check-label" for="expand-details">Ampliar datos de empleados</label>
+                                </div>
+                                <small class="form-text text-muted">Cuando está activo, la columna “Nombre” muestra DNI, nombre y centro.</small>
+                            </div>
+                        </div>
+                    </div>
                 </div>
                 <div class="tabbed-controls__footer border-top px-4 py-3 d-flex flex-column flex-md-row align-items-md-center gap-3">
                     <div class="selection-summary">
                         <span id="selection-info" class="selection-status badge fs-6" data-total="{{ total_employees }}" data-selected="{{ selected_count }}" title="Resumen de la selección actual">Seleccionados: {{ selected_count }} de {{ total_employees }}</span>
                         <small class="selection-note">Las acciones se aplican únicamente a los empleados seleccionados en la tabla de abajo.</small>
+                        {% if showing_duplicates %}
+                        <small class="text-warning d-block mt-1">Mostrando únicamente empleados duplicados por nombre con User ID distinto.</small>
+                        {% endif %}
                     </div>
                     <div class="ms-md-auto d-flex flex-wrap gap-2">
                         <button type="submit" name="action" value="select" form="employees-form" class="btn btn-outline-primary" {% if not employees %}disabled{% endif %} title="Conserva la selección de empleados aunque refresque la página.">Recordar selección</button>
@@ -170,6 +198,7 @@
                                         <span>{{ value }}</span>
                                         <form method="post" action="{{ url_for('main.index') }}" data-progress-form="true" class="d-inline">
                                             <input type="hidden" name="terminal" value="{{ terminal }}">
+                                            <input type="hidden" name="expand_details" value="{{ '1' if expand_details else '0' }}">
                                             <button type="submit" name="action" value="sync_time" class="btn btn-sm btn-outline-primary" {% if not terminal %}disabled{% endif %}>Actualizar</button>
                                         </form>
                                     </div>
@@ -219,6 +248,7 @@
             <div class="card-body">
                 <form method="post" action="{{ url_for('main.index') }}" id="employees-form" class="table-responsive" data-progress-form="true">
                     <input type="hidden" name="terminal" value="{{ terminal }}">
+                    <input type="hidden" name="expand_details" value="{{ '1' if expand_details else '0' }}">
                     <table class="table table-striped table-hover align-middle" id="employees-table">
                         <thead class="table-light">
                             <tr>
@@ -226,6 +256,7 @@
                                 <th scope="col">UID</th>
                                 <th scope="col">Nombre</th>
                                 <th scope="col">User ID</th>
+                                <th scope="col">last_seen</th>
                                 <th scope="col">Tarjeta</th>
                                 <th scope="col">Privilegio</th>
                                 <th scope="col">Grupo</th>
@@ -241,8 +272,20 @@
                                     </div>
                                 </td>
                                 <td>{{ employee.uid }}</td>
-                                <td>{{ employee.name }}</td>
+                                <td>
+                                    {% if expand_details %}
+                                        {% set extra = resolved_external_employee_details.get(employee.uid|string) %}
+                                        {% if extra %}
+                                            {{ extra.dni or 'N/D' }} — {{ extra.nombre or employee.name or 'Sin nombre' }} ({{ extra.cod_ct or 'Sin centro' }})
+                                        {% else %}
+                                            {{ employee.name }}
+                                        {% endif %}
+                                    {% else %}
+                                        {{ employee.name }}
+                                    {% endif %}
+                                </td>
                                 <td>{{ employee.user_id }}</td>
+                                <td>{{ employee_last_seen.get(employee.uid|string, 'N/A') }}</td>
                                 <td>{{ employee.card }}</td>
                                 <td>{{ employee.privilege }}</td>
                                 <td>{{ employee.group_id }}</td>

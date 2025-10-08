@@ -101,6 +101,21 @@ document.addEventListener('DOMContentLoaded', () => {
 });
 
 document.addEventListener('DOMContentLoaded', () => {
+    const autoSubmitControls = document.querySelectorAll('[data-auto-submit="true"]');
+    autoSubmitControls.forEach((control) => {
+        control.addEventListener('change', () => {
+            if (control.disabled) {
+                return;
+            }
+            const form = control.form || control.closest('form');
+            if (form) {
+                form.requestSubmit ? form.requestSubmit() : form.submit();
+            }
+        });
+    });
+});
+
+document.addEventListener('DOMContentLoaded', () => {
     const terminalHiddenInput = document.getElementById('terminal');
     const terminalSelect = document.getElementById('terminal-select');
     const customWrapper = document.querySelector('.terminal-custom');
