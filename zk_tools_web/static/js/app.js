@@ -124,6 +124,45 @@ document.addEventListener('DOMContentLoaded', () => {
     const backToTopBtn = document.querySelector('.back-to-top');
 
     if (terminalHiddenInput && terminalSelect) {
+        const controlForm = terminalHiddenInput.form || document.getElementById('controlTabsForm');
+        const databaseValue = terminalSelect.dataset.databaseValue || '__database__';
+        let initializingSelect = true;
+        let autoSubmitButton = null;
+
+        const ensureAutoSubmitButton = (actionValue) => {
+            if (!controlForm) {
+                return null;
+            }
+            if (!autoSubmitButton) {
+                autoSubmitButton = document.createElement('button');
+                autoSubmitButton.type = 'submit';
+                autoSubmitButton.name = 'action';
+                autoSubmitButton.hidden = true;
+                autoSubmitButton.dataset.autoAction = 'true';
+                controlForm.appendChild(autoSubmitButton);
+            }
+            autoSubmitButton.value = actionValue;
+            return autoSubmitButton;
+        };
+
+        const submitFormWithAction = (actionValue) => {
+            if (!controlForm) {
+                return;
+            }
+            const submitter = ensureAutoSubmitButton(actionValue);
+            if (controlForm.requestSubmit && submitter) {
+                controlForm.requestSubmit(submitter);
+                return;
+            }
+            const tempInput = document.createElement('input');
+            tempInput.type = 'hidden';
+            tempInput.name = 'action';
+            tempInput.value = actionValue;
+            controlForm.appendChild(tempInput);
+            controlForm.submit();
+            controlForm.removeChild(tempInput);
+        };
+
         const showCustom = () => {
             if (customWrapper) {
                 customWrapper.classList.remove('d-none');
@@ -155,6 +194,14 @@ document.addEventListener('DOMContentLoaded', () => {
             } else {
                 hideCustom();
                 syncHidden(selectedValue);
+            }
+
+            if (selectedValue === databaseValue && !initializingSelect) {
+                submitFormWithAction('fetch');
+            }
+
+            if (initializingSelect) {
+                initializingSelect = false;
             }
         };
 

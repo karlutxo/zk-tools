@@ -18,11 +18,23 @@ logger = logging.getLogger(__name__)
 @login_required
 def index():
     """Página principal para administrar empleados."""
-    terminal_value = request.values.get("terminal")
-    parsed_ip, parsed_port = services.parse_terminal_value(terminal_value)
+    terminal_value_raw = request.values.get("terminal")
+    terminal_value = (terminal_value_raw or "").strip()
+    is_database_selection = terminal_value == services.DATABASE_TERMINAL_KEY
+
+    if is_database_selection:
+        parsed_ip, parsed_port = (None, services.DEFAULT_PORT)
+    else:
+        parsed_ip, parsed_port = services.parse_terminal_value(terminal_value)
+
     fallback_ip = (request.values.get("ip", "") or "").strip() or None
-    ip = parsed_ip or fallback_ip
-    port = parsed_port if parsed_ip else services.coerce_port(request.values.get("port"))
+    ip = None if is_database_selection else parsed_ip or fallback_ip
+    if is_database_selection:
+        port = services.DEFAULT_PORT
+    else:
+        port = parsed_port if parsed_ip else services.coerce_port(request.values.get("port"))
+
+    cache_key = services.DATABASE_TERMINAL_KEY if is_database_selection else ip
 
     employees: List[dict] = []
     selected: Set[str] = set()
@@ -36,32 +48,44 @@ def index():
 
     def redirect_with_terminal():
         redirect_params = {}
-        terminal_param = services.format_terminal_value(ip, port)
-        if terminal_param:
-            redirect_params["terminal"] = terminal_param
-        fallback_terminal = (terminal_value or "").strip()
-        if fallback_terminal:
-            redirect_params.setdefault("terminal", fallback_terminal)
+        if is_database_selection:
+            redirect_params["terminal"] = services.DATABASE_TERMINAL_KEY
+        else:
+            terminal_param = services.format_terminal_value(ip, port)
+            if terminal_param:
+                redirect_params["terminal"] = terminal_param
+            fallback_terminal = terminal_value
+            if fallback_terminal:
+                redirect_params.setdefault("terminal", fallback_terminal)
         if expand_details:
             redirect_params["expand_details"] = "1"
         return redirect(url_for("main.index", **redirect_params))
 
     if request.method == "POST":
         action = request.form.get("action")
-        if action == "import" and ip:
+        if action == "import" and cache_key and not is_database_selection:
             try:
                 imported_employees = services.parse_employee_file(request.files.get("employee_file"))
             except ValueError as exc:
                 flash(str(exc))
             else:
-                services.set_cached_employees(ip, imported_employees)
-                services.set_selected_uids(ip, set())
+                services.set_cached_employees(cache_key, imported_employees)
+                services.set_selected_uids(cache_key, set())
                 flash(
                     f"Se importaron {len(imported_employees)} empleado(s) en memoria para el terminal {ip}."
                 )
             return redirect_with_terminal()
         if action == "import":
             flash("Debes indicar un terminal para importar empleados.")
+            return redirect_with_terminal()
+        if action == "fetch" and is_database_selection:
+            try:
+                employees = services.refresh_database_cache()
+            except Exception as exc:
+                logger.exception("Error al refrescar la caché de empleados externos: %s", exc)
+                flash(f"No se pudo actualizar la base de datos de empleados: {exc}")
+            else:
+                flash(f"Se cargaron {len(employees)} empleado(s) desde la base de datos.")
             return redirect_with_terminal()
         if action == "fetch" and ip:
             try:
@@ -73,9 +97,15 @@ def index():
                 services.set_cached_employees(ip, employees)
                 selected = services.get_selected_uids(ip)
             return redirect_with_terminal()
-        if action == "select" and ip:
+        if action == "fetch":
+            flash("Debes indicar un terminal para cargar empleados.")
+            return redirect_with_terminal()
+        if action == "select" and cache_key:
             selected_uids = set(request.form.getlist("selected"))
-            services.set_selected_uids(ip, selected_uids)
+            services.set_selected_uids(cache_key, selected_uids)
+            return redirect_with_terminal()
+        if action == "status" and is_database_selection:
+            flash("La opción Base de datos no dispone de estado de terminal.")
             return redirect_with_terminal()
         if action == "status" and ip:
             try:
@@ -168,15 +198,15 @@ def index():
                     for uid, message in errors:
                         flash(f"No se pudo eliminar el empleado {uid}: {message}")
             return redirect_with_terminal()
-        if action in {"export_csv", "export_json", "export_excel"} and ip:
+        if action in {"export_csv", "export_json", "export_excel"} and cache_key:
             selected_uids = set(request.form.getlist("selected"))
             if not selected_uids:
                 flash("Selecciona al menos un empleado para exportar.")
                 return redirect_with_terminal()
 
-            cached_employees = services.get_cached_employees(ip)
+            cached_employees = services.get_cached_employees(cache_key)
             if not cached_employees:
-                flash("No hay empleados en caché para exportar. Consulta primero el terminal.")
+                flash("No hay empleados en caché para exportar. Consulta primero la fuente de empleados.")
                 return redirect_with_terminal()
 
             selected_employees = [
@@ -188,34 +218,43 @@ def index():
                 )
                 return redirect_with_terminal()
 
-            services.set_selected_uids(ip, selected_uids)
+            services.set_selected_uids(cache_key, selected_uids)
             export_format = action.split("_", 1)[1]
+            export_host = ip or services.DATABASE_TERMINAL_LABEL.replace(" ", "_")
             try:
-                return services.build_export_response(ip, selected_employees, export_format)
+                return services.build_export_response(export_host, selected_employees, export_format)
             except ValueError as exc:
                 flash(str(exc))
                 return redirect_with_terminal()
         if action == "clear":
-            if ip:
-                cached = services.clear_terminal_cache(ip)
+            if cache_key:
+                cached = services.clear_terminal_cache(cache_key)
                 removed_count = len(cached)
                 if removed_count:
-                    flash(
-                        f"Se limpiaron {removed_count} empleado(s) en memoria para el terminal {ip}."
-                    )
+                    if is_database_selection:
+                        flash(
+                            f"Se limpiaron {removed_count} empleado(s) en memoria para la base de datos."
+                        )
+                    else:
+                        flash(
+                            f"Se limpiaron {removed_count} empleado(s) en memoria para el terminal {ip}."
+                        )
                 else:
-                    flash("No había empleados almacenados en memoria para este terminal.")
+                    if is_database_selection:
+                        flash("No había empleados almacenados en memoria para la base de datos.")
+                    else:
+                        flash("No había empleados almacenados en memoria para este terminal.")
                 return redirect_with_terminal()
             services.clear_all_cache()
             flash("Se limpiaron los empleados almacenados en memoria.")
             return redirect(url_for("main.index"))
         if action == "duplicates":
-            if not ip:
-                flash("Debes indicar un terminal para buscar duplicados.")
+            if not cache_key:
+                flash("Debes indicar una fuente de empleados para buscar duplicados.")
                 return redirect_with_terminal()
-            cached_employees = services.get_cached_employees(ip)
+            cached_employees = services.get_cached_employees(cache_key)
             if not cached_employees:
-                flash("No hay empleados en memoria. Consulta primero el terminal.")
+                flash("No hay empleados en memoria. Consulta primero la fuente seleccionada.")
                 return redirect_with_terminal()
             duplicate_employees = services.find_duplicate_employees(cached_employees)
             if duplicate_employees:
@@ -228,23 +267,32 @@ def index():
 
     if override_employees is not None:
         employees = override_employees
-        if ip:
-            selected = services.get_selected_uids(ip)
-    elif ip:
-        employees = services.get_cached_employees(ip)
-        selected = services.get_selected_uids(ip)
+        if cache_key:
+            selected = services.get_selected_uids(cache_key)
+    elif cache_key:
+        employees = services.get_cached_employees(cache_key)
+        selected = services.get_selected_uids(cache_key)
+
+    for employee in employees:
+        employee["contract_from_display"] = services.format_contract_date(employee.get("contract_from"))
+        employee["medical_leave_from_display"] = services.format_contract_date(
+            employee.get("medical_leave_from")
+        )
+        employee["vacation_status_display"] = str(employee.get("vacation_status") or "").strip()
 
     employee_map = {emp["uid"]: emp for emp in employees}
     employee_uids = set(employee_map.keys())
     selected = {uid for uid in selected if uid in employee_uids}
-    if ip:
-        services.set_selected_uids(ip, selected)
+    if cache_key:
+        services.set_selected_uids(cache_key, selected)
     total_employees = len(employees)
     selected_count = len(selected)
-    terminal_display = services.format_terminal_value(ip, port)
-    if not terminal_display and terminal_value:
+    terminal_display = services.format_terminal_value(ip, port) if ip else ""
+    if is_database_selection:
+        terminal_display = services.DATABASE_TERMINAL_LABEL
+    elif not terminal_display and terminal_value:
         terminal_display = terminal_value.strip()
-    cached_employee_count = len(services.get_cached_employees(ip)) if ip else 0
+    cached_employee_count = len(services.get_cached_employees(cache_key)) if cache_key else 0
     external_employee_details: Dict[str, dict] = {}
     resolved_external_employee_details: Dict[str, dict] = {}
     employee_last_seen: Dict[str, str] = {}
@@ -258,10 +306,14 @@ def index():
             for employee in employees:
                 user_id_value = employee.get("user_id")
                 details = services.lookup_external_employee(user_id_value, user_lookup_map)
-                if not details:
-                    continue
-                formatted_last_seen = services.format_relative_time(details.get("last_seen"))
-                employee_last_seen[str(employee.get("uid"))] = formatted_last_seen
+                last_seen_value = None
+                if details:
+                    last_seen_value = details.get("last_seen")
+                if not last_seen_value:
+                    last_seen_value = employee.get("last_seen")
+                if last_seen_value:
+                    formatted_last_seen = services.format_relative_time(last_seen_value)
+                    employee_last_seen[str(employee.get("uid"))] = formatted_last_seen
 
     if expand_details:
         try:
@@ -272,16 +324,24 @@ def index():
             expand_details = False
         else:
             for employee in employees:
-                candidate_name = employee.get("name")
-                details = services.lookup_external_employee(candidate_name, external_employee_details)
+                candidate_identifier = employee.get("dni") or employee.get("name")
+                details = services.lookup_external_employee(candidate_identifier, external_employee_details)
                 if details:
                     resolved_external_employee_details[str(employee.get("uid"))] = details
+
+    terminal_param_value = terminal_value or services.format_terminal_value(ip, port) or ""
+    show_custom_terminal_input = (
+        bool(terminal_param_value)
+        and terminal_param_value not in known_terminal_ips
+        and terminal_param_value != services.DATABASE_TERMINAL_KEY
+    )
 
     return render_template(
         "index.html",
         ip=ip,
         port=port,
-        terminal=terminal_display,
+        terminal=terminal_param_value,
+        terminal_display_name=terminal_display,
         employees=employees,
         selected=selected,
         employee_map=employee_map,
@@ -297,4 +357,8 @@ def index():
         external_employee_details=external_employee_details,
         resolved_external_employee_details=resolved_external_employee_details,
         employee_last_seen=employee_last_seen,
+        database_mode=is_database_selection,
+        database_terminal_value=services.DATABASE_TERMINAL_KEY,
+        database_terminal_label=services.DATABASE_TERMINAL_LABEL,
+        show_custom_terminal_input=show_custom_terminal_input,
     )

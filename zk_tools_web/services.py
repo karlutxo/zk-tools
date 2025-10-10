@@ -24,6 +24,9 @@ TERMINAL_EMPLOYEES: Dict[str, List[dict]] = {}
 SELECTED_EMPLOYEES: Dict[str, Set[str]] = {}
 TERMINAL_LIST_PATH = Path(__file__).resolve().parent.parent / "terminales.txt"
 
+DATABASE_TERMINAL_KEY = "__database__"
+DATABASE_TERMINAL_LABEL = "Base de datos"
+
 EXTERNAL_EMPLOYEE_URL = "http://lpa6.bonny.eu:8888/rh/zk.employees"
 EXTERNAL_EMPLOYEE_CACHE_TTL = timedelta(hours=2)
 EXTERNAL_EMPLOYEE_CACHE: Dict[str, object] = {"data": None, "timestamp": None}
@@ -35,8 +38,26 @@ EXPORT_COLUMNS: Sequence[Tuple[str, str]] = (
     ("card", "Tarjeta"),
     ("privilege", "Privilegio"),
     ("group_id", "Grupo"),
+    ("contract_from", "Contrato desde"),
+    ("medical_leave_from", "IT desde"),
+    ("vacation_status", "Vacaciones"),
     ("biometrics", "Biometría"),
 )
+
+SPANISH_MONTH_ABBR = {
+    1: "Ene",
+    2: "Feb",
+    3: "Mar",
+    4: "Abr",
+    5: "May",
+    6: "Jun",
+    7: "Jul",
+    8: "Ago",
+    9: "Sep",
+    10: "Oct",
+    11: "Nov",
+    12: "Dic",
+}
 
 
 def fetch_employees(host: str, port: int = DEFAULT_PORT) -> List[dict]:
@@ -516,6 +537,43 @@ def format_terminal_value(host: Optional[str], port: int) -> str:
     return f"{host}:{port}"
 
 
+def format_contract_date(value: Optional[str]) -> str:
+    """Convierte una fecha ISO en formato ``ddMonyy`` con meses en español."""
+    if not value:
+        return ""
+
+    text = str(value).strip()
+    if not text:
+        return ""
+
+    candidate = text.replace("Z", "+00:00")
+
+    parsed: Optional[datetime] = None
+    for parser in (
+        lambda val: datetime.fromisoformat(val),
+        lambda val: datetime.strptime(val, "%Y-%m-%d"),
+        lambda val: datetime.strptime(val, "%Y/%m/%d"),
+    ):
+        try:
+            parsed = parser(candidate)
+            break
+        except ValueError:
+            continue
+
+    if parsed is None:
+        return text
+
+    # Normaliza a naive en UTC si tiene tz
+    if parsed.tzinfo is not None:
+        parsed = parsed.astimezone(timezone.utc).replace(tzinfo=None)
+
+    month_abbr = SPANISH_MONTH_ABBR.get(parsed.month)
+    if not month_abbr:
+        return text
+
+    return f"{parsed.day:02}{month_abbr}{parsed.year % 100:02}"
+
+
 def _normalize_employee_record(raw: dict) -> dict:
     """Normaliza los datos de un empleado importado."""
 
@@ -526,6 +584,9 @@ def _normalize_employee_record(raw: dict) -> dict:
         "card": {"card", "tarjeta", "num tarjeta"},
         "privilege": {"privilege", "privilegio"},
         "group_id": {"group_id", "group id", "grupo", "id grupo", "grupo id"},
+        "contract_from": {"contrato_desde", "contrato desde", "contract_from"},
+        "medical_leave_from": {"it_desde", "it desde", "medical_leave_from"},
+        "vacation_status": {"vacaciones", "vacation_status"},
         "biometrics": {"biometrics", "biometria", "biometría", "biometricas", "plantillas"},
     }
 
@@ -575,6 +636,9 @@ def _normalize_employee_record(raw: dict) -> dict:
         "card": _safe_get("card") or "",
         "privilege": _safe_get("privilege") or "",
         "group_id": _safe_get("group_id") or "",
+        "contract_from": _safe_get("contract_from") or "",
+        "medical_leave_from": _safe_get("medical_leave_from") or "",
+        "vacation_status": _safe_get("vacation_status") or "",
         "biometrics": biometrics,
     }
 
@@ -631,9 +695,109 @@ def parse_employee_file(file_storage) -> List[dict]:
     raise ValueError("Formato de archivo no soportado. Usa JSON, CSV o Excel.")
 
 
+def _normalize_database_employee_record(raw: dict) -> Optional[dict]:
+    """Convierte un registro externo en el esquema usado por la aplicación."""
+    if not isinstance(raw, dict):
+        return None
+
+    def _first_non_empty(values):
+        for candidate in values:
+            text = str(candidate or "").strip()
+            if text:
+                return text
+        return ""
+
+    user_code = _first_non_empty(
+        [
+            raw.get("CODIGO_ZK_ATRIBUTO"),
+            raw.get("user_id"),
+            raw.get("uid"),
+            raw.get("UID"),
+            raw.get("id"),
+            raw.get("ID"),
+            raw.get("DNI"),
+        ]
+    )
+    if not user_code:
+        return None
+
+    name = _first_non_empty([
+        raw.get("NOMBRE"),
+        raw.get("nombre"),
+        raw.get("name"),
+        raw.get("NAME"),
+    ])
+
+    card = _first_non_empty([
+        raw.get("card"),
+        raw.get("CARD"),
+        raw.get("CARDNUMBER"),
+        raw.get("NUM_TARJETA"),
+        raw.get("NUMERO_TARJETA"),
+    ])
+
+    privilege = _first_non_empty([
+        raw.get("privilege"),
+        raw.get("PRIVILEGIO"),
+        raw.get("privilegio"),
+    ])
+
+    group_id = _first_non_empty([
+        raw.get("group_id"),
+        raw.get("GROUP_ID"),
+        raw.get("COD_CT"),
+        raw.get("cod_ct"),
+    ])
+
+    dni = _first_non_empty([
+        raw.get("DNI"),
+        raw.get("dni"),
+    ])
+
+    last_seen = raw.get("LAST_SEEN") or raw.get("last_seen")
+    contract_from = raw.get("CONTRATO_DESDE") or raw.get("contrato_desde")
+    medical_leave_from = raw.get("IT_DESDE") or raw.get("it_desde")
+    vacation_status = raw.get("VACACIONES") or raw.get("vacaciones")
+
+    return {
+        "uid": user_code,
+        "name": name or user_code,
+        "user_id": user_code,
+        "card": card,
+        "privilege": privilege,
+        "group_id": group_id,
+        "biometrics": [],
+        "dni": dni,
+        "last_seen": last_seen,
+        "contract_from": contract_from,
+        "medical_leave_from": medical_leave_from,
+        "vacation_status": vacation_status,
+    }
+
+
 def get_cached_employees(host: str) -> List[dict]:
     """Devuelve los empleados almacenados en memoria para un terminal."""
     return TERMINAL_EMPLOYEES.get(host, [])
+
+
+def refresh_database_cache() -> List[dict]:
+    """Refresca la caché de empleados externos y devuelve los registros normalizados."""
+    try:
+        data = load_external_employees(force_refresh=True)
+    except Exception:
+        # Propaga el error para que la vista decida cómo manejarlo.
+        raise
+
+    normalized: List[dict] = []
+    for record in data:
+        normalized_record = _normalize_database_employee_record(record)
+        if normalized_record is None:
+            continue
+        normalized.append(normalized_record)
+
+    TERMINAL_EMPLOYEES[DATABASE_TERMINAL_KEY] = normalized
+    SELECTED_EMPLOYEES.pop(DATABASE_TERMINAL_KEY, None)
+    return normalized
 
 
 def set_cached_employees(host: str, employees: List[dict]) -> None:

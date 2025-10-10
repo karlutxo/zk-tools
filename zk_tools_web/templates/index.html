@@ -67,27 +67,28 @@
                             <div class="col-12 col-lg-7 col-xl-6">
                                 <label for="terminal-select" class="form-label">Terminal</label>
                                 <input type="hidden" name="terminal" id="terminal" value="{{ terminal or '' }}">
-                                <select id="terminal-select" class="form-select" aria-describedby="terminalHelp">
+                                <select id="terminal-select" class="form-select" aria-describedby="terminalHelp" data-database-value="{{ database_terminal_value }}">
                                     <option value="" {% if not terminal %}selected{% endif %}>Selecciona un terminal…</option>
+                                    <option value="{{ database_terminal_value }}" {% if terminal == database_terminal_value %}selected{% endif %}>{{ database_terminal_label }}</option>
                                     {% for known in known_terminals %}
                                     <option value="{{ known.ip }}" {% if terminal == known.ip %}selected{% endif %}>
                                         {% if known.label %}{{ known.label }} — {{ known.ip }}{% else %}{{ known.ip }}{% endif %}
                                     </option>
                                     {% endfor %}
-                                    <option value="__custom__" {% if terminal and terminal not in known_terminal_ips %}selected{% endif %}>Otro terminal…</option>
+                                    <option value="__custom__" {% if show_custom_terminal_input %}selected{% endif %}>Otro terminal…</option>
                                 </select>
-                                <div class="terminal-custom mt-2 {% if not terminal or terminal in known_terminal_ips %}d-none{% endif %}">
-                                    <input type="text" class="form-control" id="terminal-custom" value="{% if terminal and terminal not in known_terminal_ips %}{{ terminal }}{% endif %}" placeholder="Introduce la dirección IP manualmente">
+                                <div class="terminal-custom mt-2 {% if not show_custom_terminal_input %}d-none{% endif %}">
+                                    <input type="text" class="form-control" id="terminal-custom" value="{% if show_custom_terminal_input and terminal %}{{ terminal }}{% endif %}" placeholder="Introduce la dirección IP manualmente">
                                 </div>
                                 <div id="terminalHelp" class="form-text">Selecciona un terminal conocido o introduce una dirección manualmente.</div>
                             </div>
                             <div class="col-12 col-lg-5 col-xl-4 d-flex align-items-start align-items-lg-center">
-                                <button id="status-button" type="submit" name="action" value="status" class="btn btn-outline-info w-100 w-lg-auto ms-lg-3" {% if not terminal %}disabled{% endif %} title="Muestra información detallada del terminal indicado">Estado del terminal</button>
+                                <button id="status-button" type="submit" name="action" value="status" class="btn btn-outline-info w-100 w-lg-auto ms-lg-3" {% if not terminal or database_mode %}disabled{% endif %} title="Muestra información detallada del terminal indicado">Estado del terminal</button>
                             </div>
                             <div class="col-12 d-flex flex-wrap gap-2">
                                 <button type="submit" name="action" value="fetch" class="btn btn-primary" title="Captura y muestra los empleados del terminal indicado">Cargar empleados desde el terminal</button>
-                                <button type="submit" name="action" value="push" form="employees-form" class="btn btn-success" {% if not employees %}disabled{% endif %} title="Envía los empleados seleccionados al terminal indicado">Enviar empleados al terminal</button>
-                                <button type="submit" name="action" value="delete" form="employees-form" class="btn btn-danger ms-auto" {% if not employees %}disabled{% endif %} onclick="return confirm('¿Eliminar los empleados seleccionados del terminal?');" title="Borra los empleados seleccionados del terminal indicado">Eliminar del terminal</button>
+                                <button type="submit" name="action" value="push" form="employees-form" class="btn btn-success" {% if not employees or database_mode %}disabled{% endif %} title="Envía los empleados seleccionados al terminal indicado">Enviar empleados al terminal</button>
+                                <button type="submit" name="action" value="delete" form="employees-form" class="btn btn-danger ms-auto" {% if not employees or database_mode %}disabled{% endif %} onclick="return confirm('¿Eliminar los empleados seleccionados del terminal?');" title="Borra los empleados seleccionados del terminal indicado">Eliminar del terminal</button>
                             </div>
                         </div>
                     </div>
@@ -102,7 +103,7 @@
                                 <label for="employee-file" class="form-label">Archivo de empleados</label>
                                 <div class="input-group">
                                     <input type="file" name="employee_file" id="employee-file" class="form-control" accept=".json,.csv,.xlsx,.xlsm" aria-describedby="fileHelp">
-                                    <button type="submit" name="action" value="import" class="btn btn-success" {% if not terminal %}disabled{% endif %}>Importar</button>
+                                    <button type="submit" name="action" value="import" class="btn btn-success" {% if not terminal or database_mode %}disabled{% endif %}>Importar</button>
                                 </div>
                                 <div id="fileHelp" class="form-text">Selecciona un archivo JSON, CSV o Excel para cargar empleados en la aplicación.</div>
                             </div>
@@ -260,6 +261,9 @@
                                 <th scope="col">Tarjeta</th>
                                 <th scope="col">Privilegio</th>
                                 <th scope="col">Grupo</th>
+                                <th scope="col">Contrato desde</th>
+                                <th scope="col">IT desde</th>
+                                <th scope="col">Vacaciones</th>
                                 <th scope="col">Biometría</th>
                             </tr>
                         </thead>
@@ -289,6 +293,9 @@
                                 <td>{{ employee.card }}</td>
                                 <td>{{ employee.privilege }}</td>
                                 <td>{{ employee.group_id }}</td>
+                                <td>{{ employee.contract_from_display }}</td>
+                                <td>{{ employee.medical_leave_from_display }}</td>
+                                <td>{{ employee.vacation_status_display }}</td>
                                 <td>
                                     {% if employee.biometrics %}
                                     <ul class="biometric-list">
@@ -308,7 +315,13 @@
             </div>
         </div>
         {% elif terminal %}
-            <div class="alert alert-info" role="alert">No se encontraron empleados para el terminal {{ terminal }}.</div>
+            <div class="alert alert-info" role="alert">
+                {% if database_mode %}
+                No se encontraron empleados en la base de datos.
+                {% else %}
+                No se encontraron empleados para el terminal {{ terminal_display_name or terminal }}.
+                {% endif %}
+            </div>
         {% endif %}
     </main>
     <script src="https://code.jquery.com/jquery-3.7.1.min.js"></script>
