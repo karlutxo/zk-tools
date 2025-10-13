@@ -125,7 +125,10 @@ document.addEventListener('DOMContentLoaded', () => {
 
     if (terminalHiddenInput && terminalSelect) {
         const controlForm = terminalHiddenInput.form || document.getElementById('controlTabsForm');
-        const databaseValue = terminalSelect.dataset.databaseValue || '__database__';
+        const specialValues = (terminalSelect.dataset.specialValues || '')
+            .split(',')
+            .map((value) => value.trim())
+            .filter((value) => value.length > 0);
         let initializingSelect = true;
         let autoSubmitButton = null;
 
@@ -196,7 +199,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 syncHidden(selectedValue);
             }
 
-            if (selectedValue === databaseValue && !initializingSelect) {
+            if (specialValues.includes(selectedValue) && !initializingSelect) {
                 submitFormWithAction('fetch');
             }
 

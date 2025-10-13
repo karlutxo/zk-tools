@@ -8,15 +8,19 @@ from collections import defaultdict
 from datetime import datetime, timedelta, timezone
 from io import BytesIO, StringIO
 from pathlib import Path
-from typing import Dict, Iterable, List, Optional, Sequence, Set, Tuple
+from typing import Any, Dict, Iterable, List, Optional, Sequence, Set, Tuple
 from urllib.error import URLError
+from urllib.parse import urlencode
 from urllib.request import urlopen
 
+import pymysql
+from pymysql.cursors import DictCursor
 from flask import make_response, send_file
 from openpyxl import Workbook, load_workbook
 
 from zk import const
 from zk_tools import DEFAULT_PORT, connect_with_retries
+from .config import get_setting
 
 logger = logging.getLogger(__name__)
 
@@ -25,9 +29,343 @@ SELECTED_EMPLOYEES: Dict[str, Set[str]] = {}
 TERMINAL_LIST_PATH = Path(__file__).resolve().parent.parent / "terminales.txt"
 
 DATABASE_TERMINAL_KEY = "__database__"
-DATABASE_TERMINAL_LABEL = "Base de datos"
+DATABASE_TERMINAL_LABEL = "Empleados contratados RRHH"
+ZKTIME_TERMINAL_KEY = "__zktime__"
+ZKTIME_TERMINAL_LABEL = "Empleados ZK Time"
 
-EXTERNAL_EMPLOYEE_URL = "http://lpa6.bonny.eu:8888/rh/zk.employees"
+SPECIAL_TERMINALS: Dict[str, str] = {
+    DATABASE_TERMINAL_KEY: DATABASE_TERMINAL_LABEL,
+    ZKTIME_TERMINAL_KEY: ZKTIME_TERMINAL_LABEL,
+}
+
+
+def get_special_terminal_options() -> List[Dict[str, str]]:
+    """Devuelve la lista de orígenes especiales disponibles."""
+    return [{"value": key, "label": label} for key, label in SPECIAL_TERMINALS.items()]
+
+
+def get_special_terminal_label(value: Optional[str]) -> Optional[str]:
+    """Obtiene la etiqueta asociada a un origen especial."""
+    if not value:
+        return None
+    return SPECIAL_TERMINALS.get(value)
+
+
+def normalize_special_terminal_value(value: Optional[str]) -> Optional[str]:
+    """Normaliza el valor recibido y comprueba si corresponde a un origen especial."""
+    if not value:
+        return None
+    stripped = value.strip()
+    return stripped if stripped in SPECIAL_TERMINALS else None
+
+
+def is_special_terminal(value: Optional[str]) -> bool:
+    """Indica si el valor corresponde a un origen especial."""
+    return normalize_special_terminal_value(value) is not None
+
+
+def _normalize_setting(value: Optional[str]) -> Optional[str]:
+    """Devuelve el valor sin espacios o None si está vacío."""
+    if value is None:
+        return None
+    stripped = str(value).strip()
+    return stripped or None
+
+
+def _normalize_numeric_identifier(value: Any) -> Optional[int]:
+    """Convierte un identificador numérico en int eliminando ceros a la izquierda."""
+    text = _normalize_setting(value)
+    if not text or not text.isdigit():
+        return None
+    return int(text)
+
+
+def _normalize_positive_numeric_text(value: Any) -> Optional[str]:
+    """Devuelve una cadena numérica positiva (>0) sin ceros iniciales."""
+    identifier = _normalize_numeric_identifier(value)
+    if identifier is None:
+        return None
+    if identifier <= 0:
+        return None
+    return str(identifier)
+
+
+RRHH_CARD_UPDATE_URL = _normalize_setting(get_setting("RRHH_CARD_UPDATE_URL"))
+RRHH_CARD_UPDATE_TIMEOUT = 10
+
+
+def _get_setting_any(keys: Sequence[str], default: Optional[str] = None) -> Optional[str]:
+    """Obtiene el primer valor disponible entre varias claves posible."""
+    for key in keys:
+        value = _normalize_setting(get_setting(key))
+        if value is not None:
+            return value
+    return default
+
+
+def _format_table_reference(identifier: str) -> str:
+    """Construye una referencia SQL segura para un identificador opcionalmente cualificado."""
+    parts = [part.strip() for part in (identifier or "").split(".") if part.strip()]
+    if not parts:
+        raise ValueError("El nombre de la tabla de ZK Time no puede estar vacío.")
+
+    sanitized_parts = []
+    for part in parts:
+        if not part.replace("_", "").isalnum():
+            raise ValueError(
+                f"El identificador '{identifier}' contiene caracteres no permitidos."
+            )
+        sanitized_parts.append(f"`{part}`")
+    return ".".join(sanitized_parts)
+
+
+def _normalize_zktime_employee_record(raw: Dict[str, Any]) -> Optional[dict]:
+    """Convierte un registro de ZK Time en el formato usado por la aplicación."""
+    if not raw:
+        return None
+
+    def pick(*candidates: str) -> str:
+        for candidate in candidates:
+            value = _normalize_setting(raw.get(candidate))
+            if value:
+                return value
+        return ""
+
+    code = pick("codigo", "CODIGO", "user_id", "USER_ID")
+    if not code:
+        return None
+
+    surnames = pick("apellidos", "APELLIDOS")
+    given_name = pick("nombre", "NOMBRE")
+    alias = pick("alias", "ALIAS")
+    nif = pick("nif", "NIF", "dni", "DNI")
+    tarjeta = pick("tarjeta", "TARJETA", "card", "CARD")
+
+    full_name_parts = [part for part in [surnames, given_name] if part]
+    full_name = " ".join(full_name_parts).strip() or alias or code
+    alias_value = alias or None
+    nif_value = nif or None
+    surnames_value = surnames or None
+    given_name_value = given_name or None
+    tarjeta_value = tarjeta or None
+
+    return {
+        "uid": code,
+        "user_id": code,
+        "name": full_name,
+        "card": tarjeta_value or alias_value,
+        "alias": alias_value,
+        "nif": nif_value,
+        "dni": nif_value,
+        "surnames": surnames_value,
+        "given_name": given_name_value,
+        "tarjeta": tarjeta_value,
+        "code": code,
+        "privilege": "",
+        "group_id": "",
+        "biometrics": [],
+        "last_seen": None,
+        "contract_from": None,
+        "medical_leave_from": None,
+        "vacation_status": None,
+    }
+
+
+def _get_zktime_connection_params() -> Dict[str, Any]:
+    """Obtiene la configuración necesaria para conectarse a ZK Time."""
+    host = _get_setting_any(["zktime_host", "ZKTIME_HOST"])
+    user = _get_setting_any(["zktime_user", "ZKTIME_USER"])
+    password = _normalize_setting(get_setting("zktime_password")) or _normalize_setting(
+        get_setting("ZKTIME_PASSWORD")
+    )
+    database = _get_setting_any(["zktime_database", "ZKTIME_DATABASE"])
+    port_value = _get_setting_any(["zktime_port", "ZKTIME_PORT"])
+    charset = _get_setting_any(["zktime_charset", "ZKTIME_CHARSET"], "utf8mb4")
+    table = _get_setting_any(["zktime_table", "ZKTIME_TABLE"], "empleados001")
+    query = _normalize_setting(
+        get_setting("zktime_query")
+    ) or _normalize_setting(get_setting("ZKTIME_QUERY"))
+
+    missing = [
+        name
+        for name, value in {
+            "zktime_host": host,
+            "zktime_user": user,
+            "zktime_password": password,
+            "zktime_database": database,
+        }.items()
+        if not value
+    ]
+    if missing:
+        raise RuntimeError(
+            "Faltan parámetros para conectar con ZK Time: "
+            + ", ".join(sorted(missing))
+        )
+
+    if port_value is None:
+        port = 3306
+    else:
+        try:
+            port = int(port_value)
+        except (TypeError, ValueError) as exc:
+            raise ValueError("El puerto zktime_port debe ser un número entero.") from exc
+
+    formatted_table = _format_table_reference(table)
+
+    return {
+        "host": host,
+        "user": user,
+        "password": password,
+        "database": database,
+        "port": port,
+        "charset": charset,
+        "table": formatted_table,
+        "query": query,
+    }
+
+
+def load_zktime_employees() -> List[dict]:
+    """Consulta la tabla de empleados de ZK Time y devuelve registros normalizados."""
+    params = _get_zktime_connection_params()
+    query = params["query"] or (
+        f"SELECT nif, apellidos, nombre, alias, codigo, tarjeta FROM {params['table']}"
+    )
+
+    connection = pymysql.connect(
+        host=params["host"],
+        user=params["user"],
+        password=params["password"],
+        database=params["database"],
+        port=params["port"],
+        charset=params["charset"],
+        cursorclass=DictCursor,
+        autocommit=True,
+    )
+    try:
+        with connection.cursor() as cursor:
+            cursor.execute(query)
+            rows: Sequence[Dict[str, Any]] = cursor.fetchall()
+    except pymysql.MySQLError as exc:
+        logger.exception("Error al consultar ZK Time: %s", exc)
+        raise RuntimeError(f"No se pudo consultar la base de datos ZK Time: {exc}") from exc
+    finally:
+        connection.close()
+
+    normalized: List[dict] = []
+    for row in rows:
+        normalized_row = _normalize_zktime_employee_record(row)
+        if normalized_row:
+            normalized.append(normalized_row)
+    return normalized
+
+
+def refresh_zktime_cache() -> List[dict]:
+    """Actualiza la caché interna con los empleados obtenidos desde ZK Time."""
+    employees = load_zktime_employees()
+    TERMINAL_EMPLOYEES[ZKTIME_TERMINAL_KEY] = employees
+    SELECTED_EMPLOYEES.pop(ZKTIME_TERMINAL_KEY, None)
+    return employees
+
+
+def update_zktime_cards(employees: Iterable[dict]) -> Tuple[int, int, List[Tuple[int, str]]]:
+    """Actualiza los números de tarjeta de los empleados proporcionados en ZK Time."""
+    params = _get_zktime_connection_params()
+    updates: List[Tuple[str, int]] = []
+    updates_info: List[Tuple[int, str]] = []
+
+    for employee in employees:
+        numeric_user_id = _normalize_numeric_identifier(employee.get("user_id"))
+        card_text = _normalize_positive_numeric_text(employee.get("tarjeta") or employee.get("card"))
+        if numeric_user_id is None or card_text is None:
+            continue
+        updates.append((card_text, numeric_user_id))
+        updates_info.append((numeric_user_id, card_text))
+
+    if not updates:
+        return 0, 0, []
+
+    connection = pymysql.connect(
+        host=params["host"],
+        user=params["user"],
+        password=params["password"],
+        database=params["database"],
+        port=params["port"],
+        charset=params["charset"],
+        cursorclass=DictCursor,
+        autocommit=True,
+    )
+    try:
+        with connection.cursor() as cursor:
+            sql = f"UPDATE {params['table']} SET tarjeta = %s WHERE CAST(codigo AS UNSIGNED) = %s"
+            affected = cursor.executemany(sql, updates)
+    except pymysql.MySQLError as exc:
+        logger.exception("Error al actualizar tarjetas en ZK Time: %s", exc)
+        raise RuntimeError(f"No se pudieron actualizar las tarjetas en ZK Time: {exc}") from exc
+    finally:
+        connection.close()
+
+    return affected or 0, len(updates), updates_info
+
+
+def update_rrhh_cards(
+    employees: Iterable[dict],
+) -> Tuple[int, int, List[Tuple[int, str]], List[Tuple[str, str]]]:
+    """Envía las tarjetas de los empleados al servicio externo de RRHH."""
+    base_url = RRHH_CARD_UPDATE_URL
+    if not base_url:
+        raise RuntimeError(
+            "RRHH_CARD_UPDATE_URL no está configurada. Indica la URL en el archivo .env."
+        )
+
+    attempts = 0
+    successes = 0
+    success_entries: List[Tuple[int, str]] = []
+    errors: List[Tuple[str, str]] = []
+
+    for employee in employees:
+        numeric_user_id = _normalize_numeric_identifier(
+            employee.get("user_id") or employee.get("code") or employee.get("uid")
+        )
+        alias_value = str(numeric_user_id) if numeric_user_id is not None else None
+        card_value = _normalize_positive_numeric_text(employee.get("tarjeta") or employee.get("card"))
+
+        if numeric_user_id is None or alias_value is None or card_value is None:
+            continue
+
+        attempts += 1
+        query_params = urlencode(
+            {
+                "c": str(numeric_user_id),
+                "a": alias_value,
+                "t": card_value,
+            }
+        )
+        request_url = f"{base_url}?{query_params}"
+
+        try:
+            with urlopen(request_url, timeout=RRHH_CARD_UPDATE_TIMEOUT) as response:
+                status_code = getattr(response, "status", None) or response.getcode()
+                if status_code and status_code >= 400:
+                    raise URLError(f"HTTP {status_code}")
+                # Consumimos la respuesta para liberar la conexión si usa keep-alive
+                response.read()
+        except Exception as exc:  # pragma: no cover - dependiente del servicio externo
+            logger.exception(
+                "Error al actualizar la tarjeta en RRHH para el empleado %s: %s",
+                numeric_user_id,
+                exc,
+            )
+            errors.append((str(numeric_user_id), str(exc)))
+        else:
+            successes += 1
+            success_entries.append((numeric_user_id, card_value))
+
+    return successes, attempts, success_entries, errors
+
+
+EXTERNAL_EMPLOYEE_URL = get_setting(
+    "EXTERNAL_EMPLOYEE_URL", "http://lpa6.bonny.eu:8888/rh/zk.employees"
+)
 EXTERNAL_EMPLOYEE_CACHE_TTL = timedelta(hours=2)
 EXTERNAL_EMPLOYEE_CACHE: Dict[str, object] = {"data": None, "timestamp": None}
 
@@ -953,6 +1291,15 @@ def get_external_employee_map(force_refresh: bool = False) -> Dict[str, dict]:
             "nombre": str(record.get("NOMBRE") or "").strip(),
             "cod_ct": str(record.get("COD_CT") or "").strip(),
             "last_seen": record.get("LAST_SEEN"),
+            "contract_from": _normalize_setting(
+                record.get("CONTRATO_DESDE") or record.get("contrato_desde")
+            ),
+            "medical_leave_from": _normalize_setting(
+                record.get("IT_DESDE") or record.get("it_desde")
+            ),
+            "vacation_status": _normalize_setting(
+                record.get("VACACIONES") or record.get("vacaciones")
+            ),
         }
         _store_external_mapping_entry(mapping, user_code, payload)
     return mapping
@@ -971,6 +1318,15 @@ def get_external_employee_map_by_dni(force_refresh: bool = False) -> Dict[str, d
             "nombre": str(record.get("NOMBRE") or "").strip(),
             "cod_ct": str(record.get("COD_CT") or "").strip(),
             "last_seen": record.get("LAST_SEEN"),
+            "contract_from": _normalize_setting(
+                record.get("CONTRATO_DESDE") or record.get("contrato_desde")
+            ),
+            "medical_leave_from": _normalize_setting(
+                record.get("IT_DESDE") or record.get("it_desde")
+            ),
+            "vacation_status": _normalize_setting(
+                record.get("VACACIONES") or record.get("vacaciones")
+            ),
         }
         normalized = dni.upper()
         mapping.setdefault(dni, payload)

@@ -10,6 +10,7 @@ build/
 dist/
 pip-wheel-metadata/
 *.log
+.env
 
 # ---- Virtualenvs (incluye el actual) ----
 .venv/

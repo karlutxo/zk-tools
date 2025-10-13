@@ -1,0 +1,11 @@
+# Modify and Rename this file as .env 
+
+
+EXTERNAL_EMPLOYEE_URL = "http://server.domain.com:<port>/rh/zk.employees"
+RRHH_CARD_UPDATE_URL="http://server.domain.com:<port>/rh/marcajeszk.ZKregistraEmpl"
+
+zktime_user=<user name>
+zktime_password=<password>
+zktime_host=<hostname or IP>
+zktime_database=<DB name>
+

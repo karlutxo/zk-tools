@@ -67,9 +67,12 @@
                             <div class="col-12 col-lg-7 col-xl-6">
                                 <label for="terminal-select" class="form-label">Terminal</label>
                                 <input type="hidden" name="terminal" id="terminal" value="{{ terminal or '' }}">
-                                <select id="terminal-select" class="form-select" aria-describedby="terminalHelp" data-database-value="{{ database_terminal_value }}">
+                                {% set special_values = special_terminal_options | map(attribute='value') | list %}
+                                <select id="terminal-select" class="form-select" aria-describedby="terminalHelp" data-special-values="{{ special_values | join(',') }}">
                                     <option value="" {% if not terminal %}selected{% endif %}>Selecciona un terminal…</option>
-                                    <option value="{{ database_terminal_value }}" {% if terminal == database_terminal_value %}selected{% endif %}>{{ database_terminal_label }}</option>
+                                    {% for special in special_terminal_options %}
+                                    <option value="{{ special.value }}" {% if terminal == special.value %}selected{% endif %}>{{ special.label }}</option>
+                                    {% endfor %}
                                     {% for known in known_terminals %}
                                     <option value="{{ known.ip }}" {% if terminal == known.ip %}selected{% endif %}>
                                         {% if known.label %}{{ known.label }} — {{ known.ip }}{% else %}{{ known.ip }}{% endif %}
@@ -86,7 +89,7 @@
                                 <button id="status-button" type="submit" name="action" value="status" class="btn btn-outline-info w-100 w-lg-auto ms-lg-3" {% if not terminal or database_mode %}disabled{% endif %} title="Muestra información detallada del terminal indicado">Estado del terminal</button>
                             </div>
                             <div class="col-12 d-flex flex-wrap gap-2">
-                                <button type="submit" name="action" value="fetch" class="btn btn-primary" title="Captura y muestra los empleados del terminal indicado">Cargar empleados desde el terminal</button>
+                                <button type="submit" name="action" value="fetch" class="btn btn-primary" title="Captura y muestra los empleados desde el origen indicado">Cargar empleados</button>
                                 <button type="submit" name="action" value="push" form="employees-form" class="btn btn-success" {% if not employees or database_mode %}disabled{% endif %} title="Envía los empleados seleccionados al terminal indicado">Enviar empleados al terminal</button>
                                 <button type="submit" name="action" value="delete" form="employees-form" class="btn btn-danger ms-auto" {% if not employees or database_mode %}disabled{% endif %} onclick="return confirm('¿Eliminar los empleados seleccionados del terminal?');" title="Borra los empleados seleccionados del terminal indicado">Eliminar del terminal</button>
                             </div>
@@ -156,11 +159,32 @@
                                 <small class="text-muted ms-2 d-inline-block">Necesita empleados cargados en memoria.</small>
                             </div>
                             <div class="col-12">
+                                <div class="btn-group">
+                                    <button type="button" class="btn btn-outline-primary dropdown-toggle" data-bs-toggle="dropdown" aria-expanded="false" {% if cached_employee_count == 0 %}disabled{% endif %} title="Actualiza los números de tarjeta según la fuente seleccionada">
+                                        Actualizar tarjetas
+                                    </button>
+                                    <ul class="dropdown-menu">
+                                        <li>
+                                            <button class="dropdown-item" type="submit" name="action" value="update_cards_zktime" {% if cached_employee_count == 0 %}disabled{% endif %}>
+                                                En ZKTime
+                                            </button>
+                                        </li>
+                                        <li>
+                                            <button class="dropdown-item" type="submit" name="action" value="update_cards_rrhh" {% if cached_employee_count == 0 %}disabled{% endif %}>
+                                                En RRHH
+                                            </button>
+                                        </li>
+                                    </ul>
+                                </div>
+                                <small class="text-muted ms-2 d-inline-block">Usa los empleados cargados en memoria para actualizar sus tarjetas.</small>
+                            </div>
+                            <div class="col-12">
                                 <div class="form-check">
+                                    <input type="hidden" name="expand_details" value="0">
                                     <input class="form-check-input" type="checkbox" value="1" id="expand-details" name="expand_details" {% if expand_details %}checked{% endif %} data-auto-submit="true" {% if cached_employee_count == 0 %}disabled{% endif %}>
                                     <label class="form-check-label" for="expand-details">Ampliar datos de empleados</label>
                                 </div>
-                                <small class="form-text text-muted">Cuando está activo, la columna “Nombre” muestra DNI, nombre y centro.</small>
+                                <small class="form-text text-muted">Cuando está activo, la columna “Nombre” muestra DNI y nombre.</small>
                             </div>
                         </div>
                     </div>
@@ -252,20 +276,29 @@
                     <input type="hidden" name="expand_details" value="{{ '1' if expand_details else '0' }}">
                     <table class="table table-striped table-hover align-middle" id="employees-table">
                         <thead class="table-light">
+                            {% if zktime_mode %}
                             <tr>
-                                <th scope="col">Seleccionar</th>
-                                <th scope="col">UID</th>
+                                <th scope="col">sel</th>
+                                <th scope="col">Código</th>
+                                <th scope="col">Alias</th>
+                                <th scope="col">NIF</th>
+                                <th scope="col">Apellidos</th>
                                 <th scope="col">Nombre</th>
-                                <th scope="col">User ID</th>
-                                <th scope="col">last_seen</th>
                                 <th scope="col">Tarjeta</th>
-                                <th scope="col">Privilegio</th>
-                                <th scope="col">Grupo</th>
+                            </tr>
+                            {% else %}
+                            <tr>
+                                <th scope="col">sel</th>
+                                <th scope="col">User ID</th>
+                                <th scope="col">Nombre</th>
+                                <th scope="col">Centro</th>
+                                <th scope="col">Tarjeta</th>
+                                <th scope="col">last_seen</th>
                                 <th scope="col">Contrato desde</th>
                                 <th scope="col">IT desde</th>
                                 <th scope="col">Vacaciones</th>
-                                <th scope="col">Biometría</th>
                             </tr>
+                            {% endif %}
                         </thead>
                         <tbody>
                             {% for employee in employees %}
@@ -275,12 +308,20 @@
                                         <input class="form-check-input" type="checkbox" name="selected" value="{{ employee.uid }}" {% if employee.uid in selected %}checked{% endif %}>
                                     </div>
                                 </td>
-                                <td>{{ employee.uid }}</td>
+                                {% if zktime_mode %}
+                                <td>{{ employee.code or employee.uid }}</td>
+                                <td>{{ employee.alias or 'N/D' }}</td>
+                                <td>{{ employee.nif or employee.dni or 'N/D' }}</td>
+                                <td>{{ employee.surnames or 'N/D' }}</td>
+                                <td>{{ employee.given_name or employee.name or 'N/D' }}</td>
+                                <td>{{ employee.tarjeta or 'N/D' }}</td>
+                                {% else %}
+                                <td>{{ employee.user_id }}</td>
                                 <td>
                                     {% if expand_details %}
                                         {% set extra = resolved_external_employee_details.get(employee.uid|string) %}
                                         {% if extra %}
-                                            {{ extra.dni or 'N/D' }} — {{ extra.nombre or employee.name or 'Sin nombre' }} ({{ extra.cod_ct or 'Sin centro' }})
+                                            {{ extra.dni or 'N/D' }} — {{ extra.nombre or employee.name or 'Sin nombre' }}
                                         {% else %}
                                             {{ employee.name }}
                                         {% endif %}
@@ -288,25 +329,13 @@
                                         {{ employee.name }}
                                     {% endif %}
                                 </td>
-                                <td>{{ employee.user_id }}</td>
+                                <td>{{ employee.center or employee.group_id or 'N/D' }}</td>
+                                <td>{{ employee.card or 'N/D' }}</td>
                                 <td>{{ employee_last_seen.get(employee.uid|string, 'N/A') }}</td>
-                                <td>{{ employee.card }}</td>
-                                <td>{{ employee.privilege }}</td>
-                                <td>{{ employee.group_id }}</td>
                                 <td>{{ employee.contract_from_display }}</td>
                                 <td>{{ employee.medical_leave_from_display }}</td>
                                 <td>{{ employee.vacation_status_display }}</td>
-                                <td>
-                                    {% if employee.biometrics %}
-                                    <ul class="biometric-list">
-                                        {% for bio in employee.biometrics %}
-                                        <li>FID {{ bio.fid }}, Tipo {{ bio.type }}, Tamaño {{ bio.size or 'N/D' }}, Válido {{ bio.valid }}</li>
-                                        {% endfor %}
-                                    </ul>
-                                    {% else %}
-                                    <span class="text-muted">Sin datos</span>
-                                    {% endif %}
-                                </td>
+                                {% endif %}
                             </tr>
                             {% endfor %}
                         </tbody>
@@ -317,13 +346,49 @@
         {% elif terminal %}
             <div class="alert alert-info" role="alert">
                 {% if database_mode %}
-                No se encontraron empleados en la base de datos.
+                No se encontraron empleados.
                 {% else %}
                 No se encontraron empleados para el terminal {{ terminal_display_name or terminal }}.
                 {% endif %}
             </div>
         {% endif %}
     </main>
+    {% if update_log %}
+    <div class="modal fade" id="updateLogModal" tabindex="-1" aria-labelledby="updateLogModalLabel" aria-hidden="true">
+        <div class="modal-dialog modal-lg modal-dialog-centered">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title" id="updateLogModalLabel">{{ update_log.title }}</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Cerrar"></button>
+                </div>
+                <div class="modal-body">
+                    <p class="fw-semibold mb-3">{{ update_log.summary }}</p>
+                    {% if update_log.entries %}
+                    <ul class="list-group">
+                        {% for entry in update_log.entries %}
+                        <li class="list-group-item d-flex align-items-start gap-2">
+                            {% if entry.status == 'success' %}
+                            <span class="badge bg-success-subtle text-success-emphasis">OK</span>
+                            {% elif entry.status == 'error' %}
+                            <span class="badge bg-danger-subtle text-danger-emphasis">Error</span>
+                            {% else %}
+                            <span class="badge bg-secondary-subtle text-secondary-emphasis">Info</span>
+                            {% endif %}
+                            <span>{{ entry.text }}</span>
+                        </li>
+                        {% endfor %}
+                    </ul>
+                    {% else %}
+                    <p class="text-muted mb-0">No hay detalles adicionales para mostrar.</p>
+                    {% endif %}
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-primary" data-bs-dismiss="modal">Aceptar</button>
+                </div>
+            </div>
+        </div>
+    </div>
+    {% endif %}
     <script src="https://code.jquery.com/jquery-3.7.1.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
     <script src="https://cdn.datatables.net/1.13.6/js/jquery.dataTables.min.js"></script>
@@ -333,6 +398,16 @@
     <script>
         (function showTerminalStatusModal() {
             const modalElement = document.getElementById('terminalStatusModal');
+            if (!modalElement) { return; }
+            const modal = new bootstrap.Modal(modalElement);
+            modal.show();
+        }());
+    </script>
+    {% endif %}
+    {% if update_log %}
+    <script>
+        (function showUpdateLogModal() {
+            const modalElement = document.getElementById('updateLogModal');
             if (!modalElement) { return; }
             const modal = new bootstrap.Modal(modalElement);
             modal.show();
